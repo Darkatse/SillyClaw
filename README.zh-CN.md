@@ -20,10 +20,13 @@ SillyClaw 是一个 OpenClaw 插件，用于：
 
 ## 快速开始（面向操作者）
 
-1) 安装并启用插件（本地开发链接方式）：
+1) 安装并启用插件：
 
 ```bash
+openclaw plugins install sillyclaw
+# 或用于本地开发（link 安装）：
 openclaw plugins install -l /path/to/SillyClaw
+
 openclaw plugins enable sillyclaw
 ```
 
@@ -179,4 +182,3 @@ npm test
 ## License
 
 MIT（见 `LICENSE`）。
-

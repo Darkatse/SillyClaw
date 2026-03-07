@@ -20,10 +20,13 @@ This repo intentionally targets a **subset** of SillyTavern semantics. The prima
 
 ## Quick start (operator workflow)
 
-1. Install and enable the plugin (local dev link):
+1. Install and enable the plugin:
 
 ```bash
+openclaw plugins install sillyclaw
+# or for local development:
 openclaw plugins install -l /path/to/SillyClaw
+
 openclaw plugins enable sillyclaw
 ```
 

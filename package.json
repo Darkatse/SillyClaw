@@ -1,8 +1,8 @@
 {
   "name": "sillyclaw",
   "version": "0.1.0",
-  "private": true,
   "description": "SillyTavern preset importer + roleplay prompt overlays for OpenClaw.",
+  "license": "MIT",
   "type": "module",
   "openclaw": {
     "extensions": ["./index.ts"]
@@ -13,8 +13,23 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
     "test": "vitest run --config vitest.config.ts",
-    "test:watch": "vitest --config vitest.config.ts"
+    "test:watch": "vitest --config vitest.config.ts",
+    "prepublishOnly": "npm run typecheck && npm test"
   },
+  "files": [
+    "index.ts",
+    "src",
+    "types",
+    "openclaw.plugin.json",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE",
+    "docs"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": ["openclaw", "openclaw-plugin", "sillytavern", "prompt", "roleplay"],
   "devDependencies": {
     "@types/node": "^22.13.0",
     "typescript": "^5.9.3",
