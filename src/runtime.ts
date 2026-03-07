@@ -20,6 +20,17 @@ export type SillyClawRuntime = {
   loadState: () => Promise<SillyClawState>;
   loadPreset: (id: string) => Promise<PresetLayer>;
   loadStack: (id: string) => Promise<PresetStack>;
+  inspectActive: (ctx: { agentId?: string; sessionKey?: string }) => Promise<
+    | { scope: "none" }
+    | {
+        scope: "session" | "agent" | "default";
+        stackId: string;
+        stackName: string;
+        layers: Array<{ id: string; name: string; blocks: number; enabledBlocks: number }>;
+        injectionSizes: { prependSystemContext: number; prependContext: number };
+        missingMacros: Array<keyof MacroMapping>;
+      }
+  >;
   buildPromptInjection: (ctx: { agentId?: string; sessionKey?: string }) => Promise<PromptInjection>;
   inspectStack: (params: { stackId: string }) => Promise<{
     stack: PresetStack;
@@ -62,31 +73,68 @@ export function createSillyClawRuntime(params: {
     return await store.loadStack(id);
   }
 
+  async function inspectActive(ctx: { agentId?: string; sessionKey?: string }): Promise<
+    | { scope: "none" }
+    | {
+        scope: "session" | "agent" | "default";
+        stackId: string;
+        stackName: string;
+        layers: Array<{ id: string; name: string; blocks: number; enabledBlocks: number }>;
+        injectionSizes: { prependSystemContext: number; prependContext: number };
+        missingMacros: Array<keyof MacroMapping>;
+      }
+  > {
+    const state = await store.loadState();
+    const sel = resolveActiveStackSelection({ state, agentId: ctx.agentId, sessionKey: ctx.sessionKey });
+    if (!sel.stackId) {
+      return { scope: "none" };
+    }
+
+    const inspected = await inspectStack({ stackId: sel.stackId });
+    return {
+      scope: sel.scope,
+      stackId: inspected.stack.id,
+      stackName: inspected.stack.name,
+      layers: inspected.layers.map((l) => ({
+        id: l.id,
+        name: l.name,
+        blocks: l.blocks.length,
+        enabledBlocks: l.blocks.filter((b) => b.enabled !== false && b.text.trim()).length,
+      })),
+      injectionSizes: inspected.injectionSizes,
+      missingMacros: inspected.missingMacros,
+    };
+  }
+
   async function buildPromptInjection(ctx: { agentId?: string; sessionKey?: string }): Promise<PromptInjection> {
     const state = await store.loadState();
-    const stackId = resolveActiveStackId({ state, agentId: ctx.agentId, sessionKey: ctx.sessionKey });
-    if (!stackId) {
+    const sel = resolveActiveStackSelection({ state, agentId: ctx.agentId, sessionKey: ctx.sessionKey });
+    if (!sel.stackId) {
       return {};
     }
 
-    const stack = await store.loadStack(stackId);
+    const stack = await store.loadStack(sel.stackId);
     const layers = await Promise.all(stack.layers.map((id) => store.loadPreset(id)));
 
     const result = compileStackToPromptInjection({ stack, layers });
     if (params.config.debug) {
       params.api.logger.debug(
         [
-          `SillyClaw: stack=${stackId}`,
+          `SillyClaw: stack=${stack.id}`,
+          `name=${JSON.stringify(stack.name)}`,
+          `scope=${sel.scope}`,
+          ctx.sessionKey ? `sessionKey=${ctx.sessionKey}` : undefined,
+          ctx.agentId ? `agentId=${ctx.agentId}` : undefined,
           `prependSystemContext=${result.injection.prependSystemContext?.length ?? 0} chars`,
           `prependContext=${result.injection.prependContext?.length ?? 0} chars`,
-        ].join(" "),
+        ].filter(Boolean).join(" "),
       );
     }
 
     if (result.missingMacros.length > 0) {
       params.api.logger.warn(
         `SillyClaw: missing macro mappings (${result.missingMacros.join(", ")}). ` +
-          `Set them with: openclaw sillyclaw stacks set-macros ${stackId} --char "..." --user "..."`,
+          `Set them with: openclaw sillyclaw stacks set-macros ${stack.id} --char "..." --user "..."`,
       );
     }
 
@@ -220,6 +268,7 @@ export function createSillyClawRuntime(params: {
     loadState,
     loadPreset,
     loadStack,
+    inspectActive,
     buildPromptInjection,
     inspectStack,
     importSillyTavernFromFile,
@@ -233,12 +282,21 @@ export function createSillyClawRuntime(params: {
   };
 }
 
-function resolveActiveStackId(params: {
+function resolveActiveStackSelection(params: {
   state: SillyClawState;
   agentId?: string;
   sessionKey?: string;
-}): string | undefined {
+}): { stackId?: string; scope: "none" | "session" | "agent" | "default" } {
   const perSession = params.sessionKey ? params.state.stackBySessionKey?.[params.sessionKey] : undefined;
+  if (perSession) {
+    return { stackId: perSession, scope: "session" };
+  }
   const perAgent = params.agentId ? params.state.stackByAgentId?.[params.agentId] : undefined;
-  return perSession ?? perAgent ?? params.state.defaultStackId;
+  if (perAgent) {
+    return { stackId: perAgent, scope: "agent" };
+  }
+  if (params.state.defaultStackId) {
+    return { stackId: params.state.defaultStackId, scope: "default" };
+  }
+  return { scope: "none" };
 }

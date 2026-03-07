@@ -10,7 +10,14 @@
   "engines": {
     "node": ">=22.12.0"
   },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "test": "vitest run --config vitest.config.ts",
+    "test:watch": "vitest --config vitest.config.ts"
+  },
   "devDependencies": {
-    "@types/node": "^22.13.0"
+    "@types/node": "^22.13.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
   }
 }

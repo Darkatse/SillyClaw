@@ -28,6 +28,16 @@ export function registerSillyClawCli(params: { api: OpenClawPluginApi; runtime: 
           console.log(JSON.stringify({ ok: true, presetId: preset.id, name: preset.name }, null, 2));
         });
 
+      root
+        .command("active")
+        .description("Resolve the active stack selection and show injected sizes.")
+        .option("--agent <agentId>", "Resolve using an agent id (lower precedence than --session)")
+        .option("--session <sessionKey>", "Resolve using a session key (highest precedence)")
+        .action(async (opts: { agent?: string; session?: string }) => {
+          const result = await params.runtime.inspectActive({ agentId: opts.agent, sessionKey: opts.session });
+          console.log(JSON.stringify(result, null, 2));
+        });
+
       const presets = root.command("presets").description("Preset layer operations");
       presets.command("list").action(async () => {
         const items = await params.runtime.listPresets();

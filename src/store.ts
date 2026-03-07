@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { parsePresetLayer, parsePresetStack, parseSillyClawState } from "./schema.js";
 import type { PresetLayer, PresetStack, SillyClawState } from "./types.js";
 
 async function readJsonFile<T>(filePath: string): Promise<T> {
@@ -55,7 +56,7 @@ export class SillyClawStore {
     if (!(await fileExists(p))) {
       return { schemaVersion: 1, stackByAgentId: {}, stackBySessionKey: {} };
     }
-    return await readJsonFile<SillyClawState>(p);
+    return parseSillyClawState(await readJsonFile<unknown>(p));
   }
 
   async saveState(state: SillyClawState): Promise<void> {
@@ -71,7 +72,7 @@ export class SillyClawStore {
   }
 
   async loadPreset(id: string): Promise<PresetLayer> {
-    return await readJsonFile<PresetLayer>(this.presetPath(id));
+    return parsePresetLayer(await readJsonFile<unknown>(this.presetPath(id)));
   }
 
   async listPresets(): Promise<PresetLayer[]> {
@@ -88,7 +89,7 @@ export class SillyClawStore {
       if (!ent.name.endsWith(".json")) {
         continue;
       }
-      out.push(await readJsonFile<PresetLayer>(path.join(dir, ent.name)));
+      out.push(parsePresetLayer(await readJsonFile<unknown>(path.join(dir, ent.name))));
     }
     return out;
   }
@@ -102,7 +103,7 @@ export class SillyClawStore {
   }
 
   async loadStack(id: string): Promise<PresetStack> {
-    return await readJsonFile<PresetStack>(this.stackPath(id));
+    return parsePresetStack(await readJsonFile<unknown>(this.stackPath(id)));
   }
 
   async listStacks(): Promise<PresetStack[]> {
@@ -119,7 +120,7 @@ export class SillyClawStore {
       if (!ent.name.endsWith(".json")) {
         continue;
       }
-      out.push(await readJsonFile<PresetStack>(path.join(dir, ent.name)));
+      out.push(parsePresetStack(await readJsonFile<unknown>(path.join(dir, ent.name))));
     }
     return out;
   }
