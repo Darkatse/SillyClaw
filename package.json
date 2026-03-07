@@ -1,0 +1,16 @@
+{
+  "name": "sillyclaw",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SillyTavern preset importer + roleplay prompt overlays for OpenClaw.",
+  "type": "module",
+  "openclaw": {
+    "extensions": ["./index.ts"]
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0"
+  }
+}
