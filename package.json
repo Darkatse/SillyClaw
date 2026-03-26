@@ -1,5 +1,5 @@
 {
-  "name": "sillyclaw",
+  "name": "@drakeclaw/sillyclaw",
   "version": "0.2.0",
   "description": "SillyTavern preset importer + roleplay prompt overlays for OpenClaw.",
   "license": "MIT",
