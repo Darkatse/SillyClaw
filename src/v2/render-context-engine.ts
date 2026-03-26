@@ -181,7 +181,25 @@ function toAgentMessage(
     role: instruction.role,
     content: instruction.content,
     timestamp,
+    ...(instruction.role === "assistant" ? { usage: createZeroUsageSnapshot() } : {}),
   } as AgentMessage;
+}
+
+function createZeroUsageSnapshot() {
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      total: 0,
+    },
+  };
 }
 
 function compareAbsoluteInstructions(
