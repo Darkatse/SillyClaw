@@ -1,4 +1,6 @@
 declare module "openclaw/plugin-sdk/core" {
+  import type { ContextEngineFactory } from "openclaw/plugin-sdk";
+
   export type OpenClawPluginApi = {
     id: string;
     config: unknown;
@@ -46,6 +48,18 @@ declare module "openclaw/plugin-sdk/core" {
         | Promise<void>,
       opts?: { commands?: string[] },
     ) => void;
+    registerContextEngine: (id: string, factory: ContextEngineFactory) => void;
   };
-}
 
+  export function delegateCompactionToRuntime(params: {
+    sessionId: string;
+    sessionKey?: string;
+    sessionFile: string;
+    tokenBudget?: number;
+    force?: boolean;
+    currentTokenCount?: number;
+    compactionTarget?: "budget" | "threshold";
+    customInstructions?: string;
+    runtimeContext?: Record<string, unknown>;
+  }): Promise<import("openclaw/plugin-sdk").CompactResult>;
+}

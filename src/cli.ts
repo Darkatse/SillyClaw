@@ -1,73 +1,49 @@
-import fs from "node:fs/promises";
-import path from "node:path";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-import type { SillyClawRuntime } from "./runtime.js";
-import type { MacroMapping, PresetBlockTarget } from "./types.js";
+import type { SillyClawV2Runtime } from "./v2/runtime.js";
 
-export function registerSillyClawCli(params: { api: OpenClawPluginApi; runtime: SillyClawRuntime }): void {
+export function registerSillyClawCli(params: {
+  api: OpenClawPluginApi;
+  runtime: SillyClawV2Runtime;
+}): void {
   params.api.registerCli(
     ({ program }) => {
       const p = program as any;
-
-      const root = p.command("sillyclaw").description("Manage SillyClaw preset layers and stacks.");
+      const root = p.command("sillyclaw").description("Manage SillyClaw v2 layers, stacks, and planner output.");
 
       root
         .command("import")
         .argument("<file>", "Path to a SillyTavern preset JSON file")
-        .option("--name <name>", "Override imported preset layer name")
-        .option(
-          "--main-target <target>",
-          'Where to place SillyTavern "main" (system.prepend|user.prepend)',
-        )
-        .action(async (file: string, opts: { name?: string; mainTarget?: string }) => {
-          const preset = await params.runtime.importSillyTavernFromFile({
+        .option("--name <name>", "Override imported layer name")
+        .action(async (file: string, opts: { name?: string }) => {
+          const bundle = await params.runtime.importSillyTavernFromFile({
             filePath: file,
             name: opts.name,
-            mainTarget: opts.mainTarget ? parsePresetBlockTarget(opts.mainTarget) : undefined,
           });
-          console.log(JSON.stringify({ ok: true, presetId: preset.id, name: preset.name }, null, 2));
-        });
 
-      root
-        .command("active")
-        .description("Resolve the active stack selection and show injected sizes.")
-        .option("--agent <agentId>", "Resolve using an agent id (lower precedence than --session)")
-        .option("--session <sessionKey>", "Resolve using a session key (highest precedence)")
-        .action(async (opts: { agent?: string; session?: string }) => {
-          const result = await params.runtime.inspectActive({ agentId: opts.agent, sessionKey: opts.session });
-          console.log(JSON.stringify(result, null, 2));
-        });
-
-      const presets = root.command("presets").description("Preset layer operations");
-      presets.command("list").action(async () => {
-        const items = await params.runtime.listPresets();
-        items.sort((a, b) => a.name.localeCompare(b.name));
-        console.log(
-          JSON.stringify(
-            items.map((x) => ({ id: x.id, name: x.name, blocks: x.blocks.length, source: x.source?.kind })),
-            null,
-            2,
-          ),
-        );
-      });
-
-      presets
-        .command("show")
-        .argument("<presetId>", "Preset layer id")
-        .action(async (presetId: string) => {
-          const preset = await params.runtime.loadPreset(presetId);
           console.log(
             JSON.stringify(
               {
-                id: preset.id,
-                name: preset.name,
-                source: preset.source,
-                blocks: preset.blocks.map((b) => ({
-                  target: b.target,
-                  order: b.order,
-                  enabled: b.enabled !== false,
-                  blockKey: b.blockKey,
-                  chars: b.text.length,
+                ok: true,
+                layer: {
+                  id: bundle.layer.id,
+                  name: bundle.layer.name,
+                  fragments: bundle.layer.fragments.length,
+                  scopes: bundle.layer.scopes.map((scope) => ({
+                    id: scope.id,
+                    name: scope.name,
+                    entries: scope.entries.length,
+                    preferredRenderer: scope.preferredRenderer,
+                  })),
+                  diagnostics: bundle.layer.diagnostics.map((diagnostic) => ({
+                    code: diagnostic.code,
+                    severity: diagnostic.severity,
+                    scopeId: diagnostic.scopeId,
+                  })),
+                },
+                stacks: bundle.stacks.map((stack) => ({
+                  id: stack.id,
+                  name: stack.name,
+                  preferredRenderer: stack.preferredRenderer,
                 })),
               },
               null,
@@ -76,65 +52,122 @@ export function registerSillyClawCli(params: { api: OpenClawPluginApi; runtime: 
           );
         });
 
-      presets
-        .command("export")
-        .argument("<presetId>", "Preset layer id")
-        .option("--out <file>", "Write JSON to a file (prints to stdout if omitted)")
-        .action(async (presetId: string, opts: { out?: string }) => {
-          const preset = await params.runtime.loadPreset(presetId);
-          const json = JSON.stringify(preset, null, 2) + "\n";
-          if (opts.out) {
-            const outPath = path.resolve(opts.out);
-            await fs.mkdir(path.dirname(outPath), { recursive: true });
-            await fs.writeFile(outPath, json, "utf-8");
-            console.log(JSON.stringify({ ok: true, out: outPath }, null, 2));
-            return;
-          }
-          process.stdout.write(json);
+      root
+        .command("active")
+        .description("Resolve the active stack selection and show the current compiled summary.")
+        .option("--agent <agentId>", "Resolve using an agent id (lower precedence than --session)")
+        .option("--session <sessionKey>", "Resolve using a session key (highest precedence)")
+        .action(async (opts: { agent?: string; session?: string }) => {
+          const result = await params.runtime.inspectActive({
+            agentId: opts.agent,
+            sessionKey: opts.session,
+          });
+          console.log(JSON.stringify(result, null, 2));
         });
 
-      const stacks = root.command("stacks").description("Stack operations");
-      stacks
-        .command("create")
-        .argument("<name>", "Stack name")
-        .requiredOption("--layers <ids>", "Comma-separated preset layer ids (base → overlays)")
-        .action(async (name: string, opts: { layers: string }) => {
-          const layers = parseCsv(opts.layers);
-          const stack = await params.runtime.createStack({ name, layers });
-          console.log(JSON.stringify({ ok: true, stackId: stack.id, name: stack.name, layers: stack.layers }, null, 2));
+      root.command("state").description("Show SillyClaw v2 runtime state").action(async () => {
+        console.log(JSON.stringify(await params.runtime.loadState(), null, 2));
+      });
+
+      const cache = root.command("cache").description("Inspect SillyClaw v2 cache state");
+      cache.command("stats").action(async () => {
+        console.log(JSON.stringify(await params.runtime.inspectCache(), null, 2));
+      });
+
+      const layers = root.command("layers").description("Inspect stored v2 layers");
+      layers.command("list").action(async () => {
+        console.log(JSON.stringify(await params.runtime.listLayerIndex(), null, 2));
+      });
+
+      layers
+        .command("show")
+        .argument("<layerId>", "Stored v2 layer id")
+        .action(async (layerId: string) => {
+          const layer = await params.runtime.loadLayer(layerId);
+          console.log(
+            JSON.stringify(
+              {
+                id: layer.id,
+                name: layer.name,
+                source: layer.source,
+                fragments: layer.fragments.map((fragment) => ({
+                  id: fragment.id,
+                  name: fragment.name,
+                  role: fragment.role,
+                  marker: fragment.marker,
+                  anchorBinding: fragment.anchorBinding,
+                  insertion: fragment.insertion,
+                  featureFlags: fragment.featureFlags,
+                  chars: fragment.contentTemplate.length,
+                })),
+                scopes: layer.scopes,
+                featureSummary: layer.featureSummary,
+                diagnostics: layer.diagnostics,
+              },
+              null,
+              2,
+            ),
+          );
         });
 
+      const stacks = root.command("stacks").description("Inspect stored v2 stacks");
       stacks.command("list").action(async () => {
-        const items = await params.runtime.listStacks();
-        items.sort((a, b) => a.name.localeCompare(b.name));
-        console.log(
-          JSON.stringify(
-            items.map((x) => ({ id: x.id, name: x.name, layers: x.layers, macros: x.macros ?? {} })),
-            null,
-            2,
-          ),
-        );
+        console.log(JSON.stringify(await params.runtime.listStackIndex(), null, 2));
       });
 
       stacks
+        .command("show")
+        .argument("<stackId>", "Stored v2 stack id")
+        .action(async (stackId: string) => {
+          console.log(JSON.stringify(await params.runtime.loadStack(stackId), null, 2));
+        });
+
+      stacks
         .command("inspect")
-        .argument("<stackId>", "Stack id")
+        .argument("<stackId>", "Stored v2 stack id")
         .action(async (stackId: string) => {
           const result = await params.runtime.inspectStack({ stackId });
           console.log(
             JSON.stringify(
               {
-                id: result.stack.id,
-                name: result.stack.name,
-                layers: result.layers.map((l) => ({
-                  id: l.id,
-                  name: l.name,
-                  blocks: l.blocks.length,
-                  enabledBlocks: l.blocks.filter((b) => b.enabled !== false && b.text.trim()).length,
+                stack: {
+                  id: result.stack.id,
+                  name: result.stack.name,
+                  preferredRenderer: result.stack.preferredRenderer,
+                  layers: result.stack.layers,
+                },
+                layers: result.layers.map((layer) => ({
+                  id: layer.id,
+                  name: layer.name,
+                  fragments: layer.fragments.length,
+                  scopes: layer.scopes.length,
                 })),
-                macros: result.stack.macros ?? {},
+                placementSummary: result.placementSummary,
+                diagnosticsSummary: result.diagnosticsSummary,
+                artifact: {
+                  key: result.artifact.key,
+                  createdAt: result.artifact.createdAt,
+                },
                 injectionSizes: result.injectionSizes,
-                missingMacros: result.missingMacros,
+                hookEnvelope: {
+                  prependSystem: result.plan.hookEnvelope.prependSystem.map(toEntrySummary),
+                  appendSystem: result.plan.hookEnvelope.appendSystem.map(toEntrySummary),
+                  prependContext: result.plan.hookEnvelope.prependContext.map(toEntrySummary),
+                },
+                engineArtifact: {
+                  beforeHistory: result.artifact.engineArtifact?.beforeHistory.map(toInstructionSummary) ?? [],
+                  afterHistory: result.artifact.engineArtifact?.afterHistory.map(toInstructionSummary) ?? [],
+                  absolute:
+                    result.artifact.engineArtifact?.absolute.map((instruction) => ({
+                      ...toInstructionSummary(instruction),
+                      depth: instruction.depth,
+                      order: instruction.order,
+                    })) ?? [],
+                },
+                engineInsertions: result.plan.engineInsertions.map((insertion) => ({
+                  reason: insertion.reason,
+                  ...toEntrySummary(insertion.entry),
+                })),
               },
               null,
               2,
@@ -143,68 +176,42 @@ export function registerSillyClawCli(params: { api: OpenClawPluginApi; runtime: 
         });
 
       stacks
-        .command("rename")
-        .argument("<stackId>", "Stack id")
-        .argument("<name>", "New stack name")
-        .action(async (stackId: string, name: string) => {
-          const stack = await params.runtime.updateStack({ stackId, name });
-          console.log(JSON.stringify({ ok: true, stackId: stack.id, name: stack.name }, null, 2));
-        });
-
-      stacks
-        .command("set-layers")
-        .argument("<stackId>", "Stack id")
-        .requiredOption("--layers <ids>", "Comma-separated preset layer ids (base → overlays)")
-        .action(async (stackId: string, opts: { layers: string }) => {
-          const layers = parseCsv(opts.layers);
-          const stack = await params.runtime.updateStack({ stackId, layers });
-          console.log(JSON.stringify({ ok: true, stackId: stack.id, layers: stack.layers }, null, 2));
-        });
-
-      stacks
-        .command("add-layer")
-        .argument("<stackId>", "Stack id")
-        .argument("<presetId>", "Preset layer id to add")
-        .option("--index <n>", "Insert at index (0-based). Defaults to append.")
-        .action(async (stackId: string, presetId: string, opts: { index?: string }) => {
-          const stack = await params.runtime.loadStack(stackId);
-          const layers = [...stack.layers];
-          const index = opts.index === undefined ? layers.length : parseIntStrict(opts.index, "--index");
-          if (index < 0 || index > layers.length) {
-            throw new Error(`--index out of range (0..${layers.length})`);
-          }
-          layers.splice(index, 0, presetId);
-          const updated = await params.runtime.updateStack({ stackId, layers });
-          console.log(JSON.stringify({ ok: true, stackId: updated.id, layers: updated.layers }, null, 2));
-        });
-
-      stacks
-        .command("remove-layer")
-        .argument("<stackId>", "Stack id")
-        .argument("<presetId>", "Preset layer id to remove")
-        .option("--all", "Remove all occurrences")
-        .action(async (stackId: string, presetId: string, opts: { all?: boolean }) => {
-          const stack = await params.runtime.loadStack(stackId);
-          let layers = [...stack.layers];
-          if (opts.all) {
-            layers = layers.filter((x) => x !== presetId);
-          } else {
-            const idx = layers.indexOf(presetId);
-            if (idx === -1) {
-              throw new Error("Layer not found in stack.");
-            }
-            layers.splice(idx, 1);
-          }
-          const updated = await params.runtime.updateStack({ stackId, layers });
-          console.log(JSON.stringify({ ok: true, stackId: updated.id, layers: updated.layers }, null, 2));
-        });
-
-      stacks
-        .command("delete")
-        .argument("<stackId>", "Stack id")
+        .command("diagnostics")
+        .argument("<stackId>", "Stored v2 stack id")
         .action(async (stackId: string) => {
-          await params.runtime.deleteStack({ stackId });
-          console.log(JSON.stringify({ ok: true }, null, 2));
+          const result = await params.runtime.inspectStack({ stackId });
+          console.log(
+            JSON.stringify(
+              {
+                stack: {
+                  id: result.stack.id,
+                  name: result.stack.name,
+                  preferredRenderer: result.stack.preferredRenderer,
+                },
+                placementSummary: result.placementSummary,
+                diagnosticsSummary: result.diagnosticsSummary,
+                importDiagnostics: result.importDiagnostics.map((diagnostic) => ({
+                  layerId: diagnostic.layerId,
+                  layerName: diagnostic.layerName,
+                  code: diagnostic.code,
+                  severity: diagnostic.severity,
+                  scopeId: diagnostic.scopeId,
+                  message: diagnostic.message,
+                })),
+                planDiagnostics: result.planDiagnostics.map((diagnostic) => ({
+                  code: diagnostic.code,
+                  severity: diagnostic.severity,
+                  layerId: diagnostic.layerId,
+                  scopeId: diagnostic.scopeId,
+                  fragmentId: diagnostic.fragmentId,
+                  entryKey: diagnostic.entryKey,
+                  message: diagnostic.message,
+                })),
+              },
+              null,
+              2,
+            ),
+          );
         });
 
       stacks
@@ -216,61 +223,50 @@ export function registerSillyClawCli(params: { api: OpenClawPluginApi; runtime: 
           if (opts.agent && opts.session) {
             throw new Error("Use either --agent or --session, not both.");
           }
-          const state = await params.runtime.useStack({ stackId, agentId: opts.agent, sessionKey: opts.session });
+          const state = await params.runtime.useStack({
+            stackId,
+            agentId: opts.agent,
+            sessionKey: opts.session,
+          });
           console.log(JSON.stringify({ ok: true, state }, null, 2));
         });
-
-      stacks
-        .command("set-macros")
-        .argument("<stackId>", "Stack id")
-        .option("--char <name>", "Value for {{char}}")
-        .option("--user <name>", "Value for {{user}}")
-        .action(async (stackId: string, opts: { char?: string; user?: string }) => {
-          const macros: MacroMapping = {};
-          if (typeof opts.char === "string") {
-            macros.char = opts.char;
-          }
-          if (typeof opts.user === "string") {
-            macros.user = opts.user;
-          }
-          if (Object.keys(macros).length === 0) {
-            throw new Error("No macros provided. Use --char and/or --user.");
-          }
-          const stack = await params.runtime.setStackMacros({ stackId, macros });
-          console.log(JSON.stringify({ ok: true, stackId: stack.id, macros: stack.macros ?? {} }, null, 2));
-        });
-
-      root.command("state").description("Show SillyClaw runtime state").action(async () => {
-        const state = await params.runtime.loadState();
-        console.log(JSON.stringify(state, null, 2));
-      });
     },
     { commands: ["sillyclaw"] },
   );
 }
 
-function parseCsv(value: string): string[] {
-  const ids = value
-    .split(",")
-    .map((x) => x.trim())
-    .filter(Boolean);
-  if (ids.length === 0) {
-    throw new Error("Expected a non-empty comma-separated list.");
-  }
-  return ids;
+function toEntrySummary(entry: {
+  key: string;
+  name: string;
+  role: string;
+  contentTemplate: string;
+  insertion: { kind: string; depth?: number; order?: number };
+  historySegment: string;
+  anchorBinding?: string;
+  previousAnchorBinding?: string;
+  nextAnchorBinding?: string;
+}): Record<string, unknown> {
+  return {
+    key: entry.key,
+    name: entry.name,
+    role: entry.role,
+    chars: entry.contentTemplate.length,
+    insertion: entry.insertion,
+    historySegment: entry.historySegment,
+    anchorBinding: entry.anchorBinding,
+    previousAnchorBinding: entry.previousAnchorBinding,
+    nextAnchorBinding: entry.nextAnchorBinding,
+  };
 }
 
-function parsePresetBlockTarget(value: string): PresetBlockTarget {
-  if (value === "system.prepend" || value === "user.prepend") {
-    return value;
-  }
-  throw new Error(`Invalid target: ${value}`);
-}
-
-function parseIntStrict(value: string, label: string): number {
-  const n = Number.parseInt(value, 10);
-  if (!Number.isFinite(n) || String(n) !== value.trim()) {
-    throw new Error(`Invalid integer for ${label}: ${value}`);
-  }
-  return n;
+function toInstructionSummary(instruction: {
+  entryKeys: string[];
+  role: string;
+  content: string;
+}): Record<string, unknown> {
+  return {
+    entryKeys: instruction.entryKeys,
+    role: instruction.role,
+    chars: instruction.content.length,
+  };
 }

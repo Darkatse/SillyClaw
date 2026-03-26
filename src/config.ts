@@ -1,7 +1,11 @@
 import os from "node:os";
 import path from "node:path";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-import type { SillyClawConfig } from "./types.js";
+
+export type SillyClawConfig = {
+  dataDir: string;
+  debug: boolean;
+};
 
 function resolveOpenClawStateDir(): string {
   const env = process.env.OPENCLAW_STATE_DIR?.trim();
@@ -21,4 +25,3 @@ export function resolveSillyClawConfig(params: { api: OpenClawPluginApi }): Sill
 
   return { dataDir, debug };
 }
-
