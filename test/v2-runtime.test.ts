@@ -212,12 +212,12 @@ describe("SillyClaw v2 runtime", () => {
         }),
       ).toMatchObject([
         { role: "user", content: "history" },
-        { role: "assistant", content: "SESSION" },
+        { role: "assistant", content: [{ type: "text", text: "SESSION" }] },
       ]);
 
       expect(await runtime.buildContextMessages({ messages: [...baseMessages] })).toMatchObject([
         { role: "user", content: "history" },
-        { role: "assistant", content: "DEFAULT" },
+        { role: "assistant", content: [{ type: "text", text: "DEFAULT" }] },
       ]);
     });
   });

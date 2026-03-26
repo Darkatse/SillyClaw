@@ -177,11 +177,19 @@ function toAgentMessage(
   instruction: EngineMessageInstructionV2,
   timestamp: number,
 ): AgentMessage {
+  if (instruction.role === "assistant") {
+    return {
+      role: "assistant",
+      content: [{ type: "text", text: instruction.content }],
+      timestamp,
+      usage: createZeroUsageSnapshot(),
+    } as AgentMessage;
+  }
+
   return {
     role: instruction.role,
     content: instruction.content,
     timestamp,
-    ...(instruction.role === "assistant" ? { usage: createZeroUsageSnapshot() } : {}),
   } as AgentMessage;
 }
 

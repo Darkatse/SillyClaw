@@ -6,6 +6,22 @@ import {
   renderContextEngineArtifactV2,
 } from "../src/v2/render-context-engine.js";
 
+function toComparableContent(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content
+    .map((block) =>
+      block && typeof block === "object" && "type" in block && block.type === "text"
+        ? String((block as { text?: unknown }).text ?? "")
+        : "",
+    )
+    .join("");
+}
+
 describe("renderContextEngineArtifactV2", () => {
   it("compiles planner remainder into before-history, after-history, and depth instructions", () => {
     const bundle = importSillyTavernPresetV2({
@@ -74,12 +90,12 @@ describe("renderContextEngineArtifactV2", () => {
       },
       messages: [
         { role: "user", content: "m1", timestamp: 1 },
-        { role: "assistant", content: "m2", timestamp: 2 },
+        { role: "assistant", content: [{ type: "text", text: "m2" }], timestamp: 2 },
         { role: "user", content: "m3", timestamp: 3 },
       ],
     });
 
-    expect(messages.map((message) => [message.role, message.content])).toEqual([
+    expect(messages.map((message) => [message.role, toComparableContent(message.content)])).toEqual([
       ["system", "BEFORE"],
       ["user", "m1"],
       ["assistant", "m2"],
@@ -91,7 +107,13 @@ describe("renderContextEngineArtifactV2", () => {
       ["assistant", "AFTER"],
     ]);
 
-    expect(messages.find((message) => message.role === "assistant" && message.content === "AFTER")).toMatchObject({
+    expect(
+      messages.find(
+        (message) =>
+          message.role === "assistant" && toComparableContent(message.content) === "AFTER",
+      ),
+    ).toMatchObject({
+      content: [{ type: "text", text: "AFTER" }],
       usage: {
         input: 0,
         output: 0,

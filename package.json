@@ -1,6 +1,6 @@
 {
   "name": "sillyclaw",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "SillyTavern preset importer + roleplay prompt overlays for OpenClaw.",
   "license": "MIT",
   "type": "module",
