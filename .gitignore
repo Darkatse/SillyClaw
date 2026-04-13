@@ -140,3 +140,7 @@ vite.config.ts.timestamp-*
 
 # Local Cache
 .cache/
+
+# upstream repos
+openclaw
+sillytavern

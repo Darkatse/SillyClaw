@@ -74,7 +74,19 @@ openclaw sillyclaw stacks list
 openclaw sillyclaw stacks use <stackId>
 ```
 
-5. Inspect the compiled result.
+5. Inspect or edit the imported layer.
+
+```bash
+openclaw sillyclaw layers scopes list <layerId>
+openclaw sillyclaw layers scopes show <layerId> <scopeId>
+openclaw sillyclaw layers scopes enable <layerId> <scopeId> <fragmentId>
+openclaw sillyclaw layers scopes move <layerId> <scopeId> <fragmentId> --before <otherFragmentId>
+openclaw sillyclaw layers fragments show <layerId> <fragmentId>
+openclaw sillyclaw layers fragments set-content <layerId> <fragmentId> --file ./prompt.txt
+openclaw sillyclaw layers fragments set-insertion <layerId> <fragmentId> --absolute --depth 2 --order -100
+```
+
+6. Inspect the compiled result.
 
 ```bash
 openclaw sillyclaw active
@@ -96,6 +108,15 @@ Layers:
 
 - `openclaw sillyclaw layers list`
 - `openclaw sillyclaw layers show <layerId>`
+- `openclaw sillyclaw layers scopes list <layerId>`
+- `openclaw sillyclaw layers scopes show <layerId> <scopeId>`
+- `openclaw sillyclaw layers scopes enable <layerId> <scopeId> <fragmentId>`
+- `openclaw sillyclaw layers scopes disable <layerId> <scopeId> <fragmentId>`
+- `openclaw sillyclaw layers scopes move <layerId> <scopeId> <fragmentId> [--before <otherFragmentId> | --after <otherFragmentId>]`
+- `openclaw sillyclaw layers fragments list <layerId>`
+- `openclaw sillyclaw layers fragments show <layerId> <fragmentId>`
+- `openclaw sillyclaw layers fragments set-content <layerId> <fragmentId> [--text <text> | --file <file> | --stdin]`
+- `openclaw sillyclaw layers fragments set-insertion <layerId> <fragmentId> [--relative | --absolute --depth <n> --order <n>]`
 
 Stacks:
 

@@ -3,18 +3,16 @@ import { randomUUID } from "node:crypto";
 import type {
   AnchorBindingV2,
   ImportedPresetBundleV2,
-  ImportDiagnosticV2,
   PresetLayerV2,
-  PromptFeatureFlagV2,
   PromptFragmentV2,
   PromptRoleV2,
   PromptScopeEntryV2,
   PromptScopeSourceV2,
   PromptScopeV2,
-  RendererPreferenceV2,
   StackV2,
 } from "../model.js";
 import { DEFAULT_OPENCLAW_CONTENT_BINDINGS_V2, SILLYCLAW_V2_SCHEMA_VERSION } from "../model.js";
+import { detectFeatureFlagsV2, finalizeLayerV2, resolveScopePreferredRendererV2 } from "../layer-derived.js";
 
 type RecordValue = Record<string, unknown>;
 
@@ -183,29 +181,6 @@ function detectAnchorBinding(identifier: string, marker: boolean): AnchorBinding
   return marker ? "unknown-marker" : undefined;
 }
 
-function detectFeatureFlags(content: string): PromptFeatureFlagV2[] {
-  const flags = new Set<PromptFeatureFlagV2>();
-  if (/\{\{setvar::/u.test(content)) {
-    flags.add("contains-setvar");
-  }
-  if (/\{\{getvar::/u.test(content)) {
-    flags.add("contains-getvar");
-  }
-  if (/\{\{\/\//u.test(content)) {
-    flags.add("contains-comment-macro");
-  }
-  if (/<regex\b/u.test(content)) {
-    flags.add("contains-regex-tag");
-  }
-  if (/<\|no-trans\|>/u.test(content)) {
-    flags.add("contains-no-trans-tag");
-  }
-  if (/<think>/u.test(content)) {
-    flags.add("contains-think-tag");
-  }
-  return [...flags];
-}
-
 function toFragment(prompt: StPrompt): PromptFragmentV2 {
   const marker = prompt.marker === true;
   const contentTemplate = prompt.content ?? "";
@@ -228,7 +203,7 @@ function toFragment(prompt: StPrompt): PromptFragmentV2 {
           }
         : { kind: "relative" },
     forbidOverrides: prompt.forbid_overrides === true,
-    featureFlags: detectFeatureFlags(contentTemplate),
+    featureFlags: detectFeatureFlagsV2(contentTemplate),
   };
 }
 
@@ -240,71 +215,6 @@ function toScopeEntries(scope: StPromptOrderScope, fragmentsById: Map<string, Pr
       enabled: entry.enabled,
       ordinal,
     }));
-}
-
-function resolveRendererPreference(entries: PromptScopeEntryV2[], fragmentsById: Map<string, PromptFragmentV2>): RendererPreferenceV2 {
-  const enabledFragments = entries
-    .filter((entry) => entry.enabled)
-    .map((entry) => fragmentsById.get(entry.fragmentId))
-    .filter((fragment): fragment is PromptFragmentV2 => fragment !== undefined);
-
-  const hasAbsoluteInsertions = enabledFragments.some((fragment) => fragment.insertion.kind === "absolute");
-  const hasNonSystemRoles = enabledFragments.some((fragment) => !fragment.marker && fragment.role !== "system");
-  if (hasAbsoluteInsertions || hasNonSystemRoles) {
-    return "context-engine";
-  }
-
-  const touchesHistory = enabledFragments.some((fragment) => fragment.anchorBinding === "chat-history");
-  return touchesHistory ? "hybrid" : "hooks";
-}
-
-function buildDiagnostics(layer: PresetLayerV2): ImportDiagnosticV2[] {
-  const diagnostics: ImportDiagnosticV2[] = [];
-
-  if (layer.scopes.length > 1) {
-    diagnostics.push({
-      code: "multiple-scopes",
-      severity: "info",
-      message: `Imported ${layer.scopes.length} prompt-order scopes from the source preset.`,
-    });
-  }
-
-  if (layer.featureSummary.length > 0) {
-    diagnostics.push({
-      code: "unsupported-syntax",
-      severity: "warn",
-      message: `Imported unsupported SillyTavern syntax as opaque text: ${layer.featureSummary.join(", ")}.`,
-    });
-  }
-
-  const fragmentsById = new Map(layer.fragments.map((fragment) => [fragment.id, fragment]));
-  for (const scope of layer.scopes) {
-    const enabledFragments = scope.entries
-      .filter((entry) => entry.enabled)
-      .map((entry) => fragmentsById.get(entry.fragmentId))
-      .filter((fragment): fragment is PromptFragmentV2 => fragment !== undefined);
-
-    const roles = new Set(enabledFragments.filter((fragment) => !fragment.marker).map((fragment) => fragment.role));
-    if (roles.has("user") || roles.has("assistant")) {
-      diagnostics.push({
-        code: "mixed-roles",
-        severity: "info",
-        scopeId: scope.id,
-        message: `Scope ${scope.id} contains non-system prompt roles and should be planned on the context-engine path.`,
-      });
-    }
-
-    if (enabledFragments.some((fragment) => fragment.insertion.kind === "absolute")) {
-      diagnostics.push({
-        code: "absolute-insertions",
-        severity: "info",
-        scopeId: scope.id,
-        message: `Scope ${scope.id} contains absolute depth insertions.`,
-      });
-    }
-  }
-
-  return diagnostics;
 }
 
 export type ImportSillyTavernPresetV2Params = {
@@ -330,12 +240,11 @@ export function importSillyTavernPresetV2(params: ImportSillyTavernPresetV2Param
       name: scope.name,
       sourceScope: scope.sourceScope,
       entries,
-      preferredRenderer: resolveRendererPreference(entries, fragmentsById),
+      preferredRenderer: resolveScopePreferredRendererV2(entries, fragmentsById),
     };
   });
 
-  const featureSummary = [...new Set(fragments.flatMap((fragment) => fragment.featureFlags))];
-  const layer: PresetLayerV2 = {
+  const layer = finalizeLayerV2({
     schemaVersion: SILLYCLAW_V2_SCHEMA_VERSION,
     id: layerId,
     name: params.name || path.parse(params.sourceFileName ?? "import").name,
@@ -347,13 +256,11 @@ export function importSillyTavernPresetV2(params: ImportSillyTavernPresetV2Param
     },
     fragments,
     scopes,
-    featureSummary,
+    featureSummary: [],
     diagnostics: [],
-  };
+  } satisfies PresetLayerV2);
 
-  layer.diagnostics = buildDiagnostics(layer);
-
-  const stacks = scopes.map<StackV2>((scope) => ({
+  const stacks = layer.scopes.map<StackV2>((scope) => ({
     schemaVersion: SILLYCLAW_V2_SCHEMA_VERSION,
     id: `${layerId}--${scope.id}`,
     name: `${layer.name} (${scope.name})`,

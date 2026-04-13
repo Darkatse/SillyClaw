@@ -12,6 +12,9 @@ import type {
   PlacementSummaryV2,
   PlanDiagnosticV2,
   PresetLayerV2,
+  PromptFragmentV2,
+  PromptInsertionV2,
+  PromptScopeV2,
   RenderPlanV2,
   SillyClawStateV2,
   StackArtifactV2,
@@ -20,6 +23,13 @@ import type {
 } from "./model.js";
 import { SILLYCLAW_V2_SCHEMA_VERSION } from "./model.js";
 import { importSillyTavernPresetV2 } from "./import/sillytavern.js";
+import { finalizeLayerV2, resolveStackPreferredRendererV2 } from "./layer-derived.js";
+import {
+  moveScopeEntryV2,
+  setFragmentContentV2,
+  setFragmentInsertionV2,
+  setScopeEntryEnabledV2,
+} from "./layer-mutations.js";
 import { summarizePlacementV2 } from "./observability.js";
 import { planStackRenderV2, SILLYCLAW_V2_PLANNER_VERSION } from "./planner.js";
 import {
@@ -94,6 +104,20 @@ type CacheStatsV2 = {
   };
 };
 
+type LayerScopeMutationResultV2 = {
+  layer: PresetLayerV2;
+  scope: PromptScopeV2;
+  affectedStackIds: string[];
+  updatedStacks: StackV2[];
+};
+
+type LayerFragmentMutationResultV2 = {
+  layer: PresetLayerV2;
+  fragment: PromptFragmentV2;
+  affectedStackIds: string[];
+  updatedStacks: StackV2[];
+};
+
 export type SillyClawV2Runtime = {
   store: SillyClawV2Store;
   loadState: () => Promise<SillyClawStateV2>;
@@ -112,6 +136,29 @@ export type SillyClawV2Runtime = {
     sessionKey?: string;
     messages: AgentMessage[];
   }) => Promise<AgentMessage[]>;
+  setLayerScopeEntryEnabled: (params: {
+    layerId: string;
+    scopeId: string;
+    fragmentId: string;
+    enabled: boolean;
+  }) => Promise<LayerScopeMutationResultV2>;
+  moveLayerScopeEntry: (params: {
+    layerId: string;
+    scopeId: string;
+    fragmentId: string;
+    beforeFragmentId?: string;
+    afterFragmentId?: string;
+  }) => Promise<LayerScopeMutationResultV2>;
+  setLayerFragmentContent: (params: {
+    layerId: string;
+    fragmentId: string;
+    content: string;
+  }) => Promise<LayerFragmentMutationResultV2>;
+  setLayerFragmentInsertion: (params: {
+    layerId: string;
+    fragmentId: string;
+    insertion: PromptInsertionV2;
+  }) => Promise<LayerFragmentMutationResultV2>;
   inspectStack: (params: { stackId: string }) => Promise<StackInspectionV2>;
   inspectActive: (ctx: { agentId?: string; sessionKey?: string }) => Promise<ActiveInspectionV2>;
   inspectCache: () => Promise<CacheStatsV2>;
@@ -227,6 +274,96 @@ export function createSillyClawV2Runtime(params: {
     });
   }
 
+  async function setLayerScopeEntryEnabled(params: {
+    layerId: string;
+    scopeId: string;
+    fragmentId: string;
+    enabled: boolean;
+  }): Promise<LayerScopeMutationResultV2> {
+    const result = await mutateLayer({
+      store,
+      layerId: params.layerId,
+      mutate: (layer) =>
+        setScopeEntryEnabledV2({
+          layer,
+          scopeId: params.scopeId,
+          fragmentId: params.fragmentId,
+          enabled: params.enabled,
+        }),
+    });
+    return {
+      ...result,
+      scope: requireScope(result.layer, params.scopeId),
+    };
+  }
+
+  async function moveLayerScopeEntry(params: {
+    layerId: string;
+    scopeId: string;
+    fragmentId: string;
+    beforeFragmentId?: string;
+    afterFragmentId?: string;
+  }): Promise<LayerScopeMutationResultV2> {
+    const result = await mutateLayer({
+      store,
+      layerId: params.layerId,
+      mutate: (layer) =>
+        moveScopeEntryV2({
+          layer,
+          scopeId: params.scopeId,
+          fragmentId: params.fragmentId,
+          beforeFragmentId: params.beforeFragmentId,
+          afterFragmentId: params.afterFragmentId,
+        }),
+    });
+    return {
+      ...result,
+      scope: requireScope(result.layer, params.scopeId),
+    };
+  }
+
+  async function setLayerFragmentContent(params: {
+    layerId: string;
+    fragmentId: string;
+    content: string;
+  }): Promise<LayerFragmentMutationResultV2> {
+    const result = await mutateLayer({
+      store,
+      layerId: params.layerId,
+      mutate: (layer) =>
+        setFragmentContentV2({
+          layer,
+          fragmentId: params.fragmentId,
+          content: params.content,
+        }),
+    });
+    return {
+      ...result,
+      fragment: requireFragment(result.layer, params.fragmentId),
+    };
+  }
+
+  async function setLayerFragmentInsertion(params: {
+    layerId: string;
+    fragmentId: string;
+    insertion: PromptInsertionV2;
+  }): Promise<LayerFragmentMutationResultV2> {
+    const result = await mutateLayer({
+      store,
+      layerId: params.layerId,
+      mutate: (layer) =>
+        setFragmentInsertionV2({
+          layer,
+          fragmentId: params.fragmentId,
+          insertion: params.insertion,
+        }),
+    });
+    return {
+      ...result,
+      fragment: requireFragment(result.layer, params.fragmentId),
+    };
+  }
+
   async function inspectStack(p: { stackId: string }): Promise<StackInspectionV2> {
     const compiled = await compileStack({
       store,
@@ -340,6 +477,10 @@ export function createSillyClawV2Runtime(params: {
     useStack,
     buildPromptInjection,
     buildContextMessages,
+    setLayerScopeEntryEnabled,
+    moveLayerScopeEntry,
+    setLayerFragmentContent,
+    setLayerFragmentInsertion,
     inspectStack,
     inspectActive,
     inspectCache,
@@ -450,6 +591,54 @@ async function resolveActiveArtifact(params: {
   };
 }
 
+async function mutateLayer(params: {
+  store: SillyClawV2Store;
+  layerId: string;
+  mutate: (layer: PresetLayerV2) => PresetLayerV2;
+}): Promise<{
+  layer: PresetLayerV2;
+  affectedStackIds: string[];
+  updatedStacks: StackV2[];
+}> {
+  const layer = await params.store.loadLayer(params.layerId);
+  const nextLayer = finalizeLayerV2(params.mutate(layer));
+  await params.store.saveLayer(nextLayer);
+
+  const affectedStackIds = (await params.store.listStackIndex())
+    .filter((entry) => entry.layerIds.includes(params.layerId))
+    .map((entry) => entry.id);
+
+  const updatedStacks: StackV2[] = [];
+  for (const stackId of affectedStackIds) {
+    const stack = await params.store.loadStack(stackId);
+    const layers = await Promise.all(
+      stack.layers.map((layerRef) =>
+        layerRef.layerId === nextLayer.id ? nextLayer : params.store.loadLayer(layerRef.layerId),
+      ),
+    );
+    const preferredRenderer = resolveStackPreferredRendererV2({
+      stack,
+      layers,
+    });
+    if (stack.preferredRenderer === preferredRenderer) {
+      continue;
+    }
+
+    const nextStack = {
+      ...stack,
+      preferredRenderer,
+    };
+    await params.store.saveStack(nextStack);
+    updatedStacks.push(nextStack);
+  }
+
+  return {
+    layer: nextLayer,
+    affectedStackIds,
+    updatedStacks,
+  };
+}
+
 async function loadWarmArtifact(
   store: SillyClawV2Store,
   stackId: string,
@@ -479,6 +668,22 @@ async function loadWarmArtifact(
     indexEntry,
     artifact,
   };
+}
+
+function requireScope(layer: PresetLayerV2, scopeId: string): PromptScopeV2 {
+  const scope = layer.scopes.find((candidate) => candidate.id === scopeId);
+  if (!scope) {
+    throw new Error(`SillyClaw v2 runtime: missing scope after mutation: ${layer.id}:${scopeId}`);
+  }
+  return scope;
+}
+
+function requireFragment(layer: PresetLayerV2, fragmentId: string): PromptFragmentV2 {
+  const fragment = layer.fragments.find((candidate) => candidate.id === fragmentId);
+  if (!fragment) {
+    throw new Error(`SillyClaw v2 runtime: missing fragment after mutation: ${layer.id}:${fragmentId}`);
+  }
+  return fragment;
 }
 
 function summarizeDiagnostics(

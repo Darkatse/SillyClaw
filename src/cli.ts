@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import type { SillyClawV2Runtime } from "./v2/runtime.js";
 
@@ -109,6 +110,212 @@ export function registerSillyClawCli(params: {
             ),
           );
         });
+
+      const layerScopes = layers.command("scopes").description("Inspect or modify preserved prompt-order scopes");
+      layerScopes
+        .command("list")
+        .argument("<layerId>", "Stored v2 layer id")
+        .action(async (layerId: string) => {
+          const layer = await params.runtime.loadLayer(layerId);
+          console.log(
+            JSON.stringify(
+              layer.scopes.map((scope) => ({
+                id: scope.id,
+                name: scope.name,
+                sourceScope: scope.sourceScope,
+                preferredRenderer: scope.preferredRenderer,
+                entries: scope.entries.length,
+                enabledEntries: scope.entries.filter((entry) => entry.enabled).length,
+              })),
+              null,
+              2,
+            ),
+          );
+        });
+
+      layerScopes
+        .command("show")
+        .argument("<layerId>", "Stored v2 layer id")
+        .argument("<scopeId>", "Preserved scope id")
+        .action(async (layerId: string, scopeId: string) => {
+          const layer = await params.runtime.loadLayer(layerId);
+          console.log(JSON.stringify(toScopeSummary(layer, scopeId), null, 2));
+        });
+
+      layerScopes
+        .command("enable")
+        .argument("<layerId>", "Stored v2 layer id")
+        .argument("<scopeId>", "Preserved scope id")
+        .argument("<fragmentId>", "Fragment id to enable inside the scope")
+        .action(async (layerId: string, scopeId: string, fragmentId: string) => {
+          const result = await params.runtime.setLayerScopeEntryEnabled({
+            layerId,
+            scopeId,
+            fragmentId,
+            enabled: true,
+          });
+          console.log(
+            JSON.stringify(
+              {
+                ok: true,
+                scope: toScopeSummary(result.layer, result.scope.id),
+                affectedStackIds: result.affectedStackIds,
+                updatedStacks: result.updatedStacks.map(toStackSummary),
+              },
+              null,
+              2,
+            ),
+          );
+        });
+
+      layerScopes
+        .command("disable")
+        .argument("<layerId>", "Stored v2 layer id")
+        .argument("<scopeId>", "Preserved scope id")
+        .argument("<fragmentId>", "Fragment id to disable inside the scope")
+        .action(async (layerId: string, scopeId: string, fragmentId: string) => {
+          const result = await params.runtime.setLayerScopeEntryEnabled({
+            layerId,
+            scopeId,
+            fragmentId,
+            enabled: false,
+          });
+          console.log(
+            JSON.stringify(
+              {
+                ok: true,
+                scope: toScopeSummary(result.layer, result.scope.id),
+                affectedStackIds: result.affectedStackIds,
+                updatedStacks: result.updatedStacks.map(toStackSummary),
+              },
+              null,
+              2,
+            ),
+          );
+        });
+
+      layerScopes
+        .command("move")
+        .argument("<layerId>", "Stored v2 layer id")
+        .argument("<scopeId>", "Preserved scope id")
+        .argument("<fragmentId>", "Fragment id to move inside the scope")
+        .option("--before <fragmentId>", "Insert before another fragment id")
+        .option("--after <fragmentId>", "Insert after another fragment id")
+        .action(
+          async (
+            layerId: string,
+            scopeId: string,
+            fragmentId: string,
+            opts: { before?: string; after?: string },
+          ) => {
+            const result = await params.runtime.moveLayerScopeEntry({
+              layerId,
+              scopeId,
+              fragmentId,
+              beforeFragmentId: opts.before,
+              afterFragmentId: opts.after,
+            });
+            console.log(
+              JSON.stringify(
+                {
+                  ok: true,
+                  scope: toScopeSummary(result.layer, result.scope.id),
+                  affectedStackIds: result.affectedStackIds,
+                  updatedStacks: result.updatedStacks.map(toStackSummary),
+                },
+                null,
+                2,
+              ),
+            );
+          },
+        );
+
+      const layerFragments = layers.command("fragments").description("Inspect or modify stored prompt fragments");
+      layerFragments
+        .command("list")
+        .argument("<layerId>", "Stored v2 layer id")
+        .action(async (layerId: string) => {
+          const layer = await params.runtime.loadLayer(layerId);
+          console.log(JSON.stringify(layer.fragments.map((fragment) => toFragmentSummary(layer, fragment.id)), null, 2));
+        });
+
+      layerFragments
+        .command("show")
+        .argument("<layerId>", "Stored v2 layer id")
+        .argument("<fragmentId>", "Stored fragment id")
+        .action(async (layerId: string, fragmentId: string) => {
+          const layer = await params.runtime.loadLayer(layerId);
+          console.log(JSON.stringify(toFragmentDetail(layer, fragmentId), null, 2));
+        });
+
+      layerFragments
+        .command("set-content")
+        .argument("<layerId>", "Stored v2 layer id")
+        .argument("<fragmentId>", "Stored fragment id")
+        .option("--text <text>", "Set content from a literal string")
+        .option("--file <path>", "Set content from a UTF-8 text file")
+        .option("--stdin", "Read content from stdin")
+        .action(
+          async (
+            layerId: string,
+            fragmentId: string,
+            opts: { text?: string; file?: string; stdin?: boolean },
+          ) => {
+            const content = await readContentInput(opts);
+            const result = await params.runtime.setLayerFragmentContent({
+              layerId,
+              fragmentId,
+              content,
+            });
+            console.log(
+              JSON.stringify(
+                {
+                  ok: true,
+                  fragment: toFragmentSummary(result.layer, result.fragment.id),
+                  affectedStackIds: result.affectedStackIds,
+                  updatedStacks: result.updatedStacks.map(toStackSummary),
+                },
+                null,
+                2,
+              ),
+            );
+          },
+        );
+
+      layerFragments
+        .command("set-insertion")
+        .argument("<layerId>", "Stored v2 layer id")
+        .argument("<fragmentId>", "Stored fragment id")
+        .option("--relative", "Use relative placement")
+        .option("--absolute", "Use absolute placement")
+        .option("--depth <depth>", "Absolute depth")
+        .option("--order <order>", "Absolute insertion order")
+        .action(
+          async (
+            layerId: string,
+            fragmentId: string,
+            opts: { relative?: boolean; absolute?: boolean; depth?: string; order?: string },
+          ) => {
+            const insertion = parseInsertionOptions(opts);
+            const result = await params.runtime.setLayerFragmentInsertion({
+              layerId,
+              fragmentId,
+              insertion,
+            });
+            console.log(
+              JSON.stringify(
+                {
+                  ok: true,
+                  fragment: toFragmentSummary(result.layer, result.fragment.id),
+                  affectedStackIds: result.affectedStackIds,
+                  updatedStacks: result.updatedStacks.map(toStackSummary),
+                },
+                null,
+                2,
+              ),
+            );
+          },
+        );
 
       const stacks = root.command("stacks").description("Inspect stored v2 stacks");
       stacks.command("list").action(async () => {
@@ -269,4 +476,219 @@ function toInstructionSummary(instruction: {
     role: instruction.role,
     chars: instruction.content.length,
   };
+}
+
+function toScopeSummary(
+  layer: {
+    id: string;
+    name: string;
+    scopes: Array<{
+      id: string;
+      name: string;
+      sourceScope: unknown;
+      preferredRenderer: string;
+      entries: Array<{ fragmentId: string; enabled: boolean; ordinal: number }>;
+    }>;
+    fragments: Array<{
+      id: string;
+      name: string;
+      role: string;
+      marker: boolean;
+      systemPrompt: boolean;
+      anchorBinding?: string;
+      insertion: { kind: string; depth?: number; order?: number };
+      featureFlags: string[];
+      contentTemplate: string;
+    }>;
+  },
+  scopeId: string,
+): Record<string, unknown> {
+  const scope = requireScope(layer, scopeId);
+  const fragmentsById = new Map(layer.fragments.map((fragment) => [fragment.id, fragment]));
+  return {
+    layerId: layer.id,
+    layerName: layer.name,
+    id: scope.id,
+    name: scope.name,
+    sourceScope: scope.sourceScope,
+    preferredRenderer: scope.preferredRenderer,
+    entries: scope.entries
+      .slice()
+      .sort((left, right) => left.ordinal - right.ordinal)
+      .map((entry) => {
+        const fragment = fragmentsById.get(entry.fragmentId);
+        if (!fragment) {
+          throw new Error(`SillyClaw CLI: missing fragment for scope entry: ${scope.id}:${entry.fragmentId}`);
+        }
+        return {
+          fragmentId: entry.fragmentId,
+          enabled: entry.enabled,
+          ordinal: entry.ordinal,
+          name: fragment.name,
+          role: fragment.role,
+          marker: fragment.marker,
+          systemPrompt: fragment.systemPrompt,
+          anchorBinding: fragment.anchorBinding,
+          insertion: fragment.insertion,
+          featureFlags: fragment.featureFlags,
+          chars: fragment.contentTemplate.length,
+        };
+      }),
+  };
+}
+
+function toFragmentSummary(
+  layer: {
+    id: string;
+    name: string;
+    scopes: Array<{
+      id: string;
+      entries: Array<{ fragmentId: string; enabled: boolean; ordinal: number }>;
+    }>;
+    fragments: Array<{
+      id: string;
+      name: string;
+      role: string;
+      marker: boolean;
+      systemPrompt: boolean;
+      anchorBinding?: string;
+      triggerPolicy: string[];
+      insertion: { kind: string; depth?: number; order?: number };
+      forbidOverrides: boolean;
+      featureFlags: string[];
+      contentTemplate: string;
+    }>;
+  },
+  fragmentId: string,
+): Record<string, unknown> {
+  const fragment = requireFragment(layer, fragmentId);
+  return {
+    layerId: layer.id,
+    layerName: layer.name,
+    id: fragment.id,
+    name: fragment.name,
+    role: fragment.role,
+    marker: fragment.marker,
+    systemPrompt: fragment.systemPrompt,
+    anchorBinding: fragment.anchorBinding,
+    triggerPolicy: fragment.triggerPolicy,
+    insertion: fragment.insertion,
+    forbidOverrides: fragment.forbidOverrides,
+    featureFlags: fragment.featureFlags,
+    chars: fragment.contentTemplate.length,
+    referencedBy: layer.scopes
+      .filter((scope) => scope.entries.some((entry) => entry.fragmentId === fragment.id))
+      .map((scope) => {
+        const entry = scope.entries.find((candidate) => candidate.fragmentId === fragment.id);
+        if (!entry) {
+          throw new Error(`SillyClaw CLI: missing scope entry after reference match: ${scope.id}:${fragment.id}`);
+        }
+        return {
+          scopeId: scope.id,
+          enabled: entry.enabled,
+          ordinal: entry.ordinal,
+        };
+      }),
+  };
+}
+
+function toFragmentDetail(
+  layer: Parameters<typeof toFragmentSummary>[0],
+  fragmentId: string,
+): Record<string, unknown> {
+  const fragment = requireFragment(layer, fragmentId);
+  return {
+    ...toFragmentSummary(layer, fragmentId),
+    contentTemplate: fragment.contentTemplate,
+  };
+}
+
+function toStackSummary(stack: { id: string; name: string; preferredRenderer: string }): Record<string, unknown> {
+  return {
+    id: stack.id,
+    name: stack.name,
+    preferredRenderer: stack.preferredRenderer,
+  };
+}
+
+function requireScope(
+  layer: Parameters<typeof toScopeSummary>[0],
+  scopeId: string,
+): Parameters<typeof toScopeSummary>[0]["scopes"][number] {
+  const scope = layer.scopes.find((candidate) => candidate.id === scopeId);
+  if (!scope) {
+    throw new Error(`SillyClaw CLI: missing scope: ${layer.id}:${scopeId}`);
+  }
+  return scope;
+}
+
+function requireFragment(
+  layer: Parameters<typeof toFragmentSummary>[0],
+  fragmentId: string,
+): Parameters<typeof toFragmentSummary>[0]["fragments"][number] {
+  const fragment = layer.fragments.find((candidate) => candidate.id === fragmentId);
+  if (!fragment) {
+    throw new Error(`SillyClaw CLI: missing fragment: ${layer.id}:${fragmentId}`);
+  }
+  return fragment;
+}
+
+async function readContentInput(opts: {
+  text?: string;
+  file?: string;
+  stdin?: boolean;
+}): Promise<string> {
+  const sourceCount = Number(opts.text !== undefined) + Number(opts.file !== undefined) + Number(opts.stdin === true);
+  if (sourceCount !== 1) {
+    throw new Error("Use exactly one content source: --text, --file, or --stdin.");
+  }
+
+  if (opts.text !== undefined) {
+    return opts.text;
+  }
+  if (opts.file !== undefined) {
+    return await fs.readFile(opts.file, "utf-8");
+  }
+
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString("utf-8");
+}
+
+function parseInsertionOptions(opts: {
+  relative?: boolean;
+  absolute?: boolean;
+  depth?: string;
+  order?: string;
+}): { kind: "relative" } | { kind: "absolute"; depth: number; order: number } {
+  if (opts.relative === opts.absolute) {
+    throw new Error("Use exactly one insertion mode: --relative or --absolute.");
+  }
+
+  if (opts.relative) {
+    if (opts.depth !== undefined || opts.order !== undefined) {
+      throw new Error("Relative insertion does not accept --depth or --order.");
+    }
+    return { kind: "relative" };
+  }
+
+  if (opts.depth === undefined || opts.order === undefined) {
+    throw new Error("Absolute insertion requires both --depth and --order.");
+  }
+
+  return {
+    kind: "absolute",
+    depth: parseIntegerOption(opts.depth, "depth"),
+    order: parseIntegerOption(opts.order, "order"),
+  };
+}
+
+function parseIntegerOption(value: string, label: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) {
+    throw new Error(`Expected ${label} to be an integer, received: ${value}`);
+  }
+  return parsed;
 }

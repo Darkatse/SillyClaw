@@ -363,6 +363,15 @@ Current commands:
 - `openclaw sillyclaw cache stats`
 - `openclaw sillyclaw layers list`
 - `openclaw sillyclaw layers show <layerId>`
+- `openclaw sillyclaw layers scopes list <layerId>`
+- `openclaw sillyclaw layers scopes show <layerId> <scopeId>`
+- `openclaw sillyclaw layers scopes enable <layerId> <scopeId> <fragmentId>`
+- `openclaw sillyclaw layers scopes disable <layerId> <scopeId> <fragmentId>`
+- `openclaw sillyclaw layers scopes move <layerId> <scopeId> <fragmentId>`
+- `openclaw sillyclaw layers fragments list <layerId>`
+- `openclaw sillyclaw layers fragments show <layerId> <fragmentId>`
+- `openclaw sillyclaw layers fragments set-content <layerId> <fragmentId>`
+- `openclaw sillyclaw layers fragments set-insertion <layerId> <fragmentId>`
 - `openclaw sillyclaw stacks list`
 - `openclaw sillyclaw stacks show <stackId>`
 - `openclaw sillyclaw stacks inspect <stackId>`
@@ -374,6 +383,8 @@ These commands operate on the v2 runtime and planner path.
 Observability contract:
 
 - `active` reports the resolved stack, cache source, hook injection sizes, and compiled placement summary,
+- `layers scopes show` exposes one preserved `prompt_order` with fragment-aware entry metadata,
+- `layers fragments show` prints one fragment body plus its scope references,
 - `stacks list` stays index-backed and shows cached placement summaries when a current artifact exists,
 - `stacks inspect` shows the compiled artifact summary plus safe entry-level placement metadata,
 - `stacks diagnostics` shows import diagnostics and planner diagnostics without printing prompt bodies,

@@ -221,7 +221,7 @@ function buildLayerIndexEntry(layer: PresetLayerV2): LayerIndexEntryV2 {
     id: layer.id,
     name: layer.name,
     sourceKind: layer.source?.kind,
-    updatedAt: layer.source?.importedAt ?? new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
     fragmentCount: layer.fragments.length,
     scopeCount: layer.scopes.length,
     absoluteCount: layer.fragments.filter((fragment) => fragment.insertion.kind === "absolute").length,
