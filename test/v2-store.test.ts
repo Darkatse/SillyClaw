@@ -1,23 +1,12 @@
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { importSillyTavernPresetV2 } from "../src/v2/import/sillytavern.js";
 import { SILLYCLAW_V2_SCHEMA_VERSION } from "../src/v2/model.js";
 import { SillyClawV2Store } from "../src/v2/store.js";
-
-async function withTempDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sillyclaw-v2-test-"));
-  try {
-    return await fn(dir);
-  } finally {
-    await fs.rm(dir, { recursive: true, force: true });
-  }
-}
+import { withTempDir } from "./helpers/io.js";
 
 describe("SillyClawV2Store", () => {
   it("persists imported bundles and maintains index-only listings", async () => {
-    await withTempDir(async (dataDir) => {
+    await withTempDir("sillyclaw-v2-test-", async (dataDir) => {
       const store = new SillyClawV2Store({ dataDir });
       const bundle = importSillyTavernPresetV2({
         layerId: "layer-store",
@@ -77,7 +66,7 @@ describe("SillyClawV2Store", () => {
   });
 
   it("tracks artifacts in the stack index while state remains selection-only", async () => {
-    await withTempDir(async (dataDir) => {
+    await withTempDir("sillyclaw-v2-test-", async (dataDir) => {
       const store = new SillyClawV2Store({ dataDir });
       const bundle = importSillyTavernPresetV2({
         layerId: "layer-artifact",
@@ -135,7 +124,7 @@ describe("SillyClawV2Store", () => {
   });
 
   it("invalidates stack artifacts when a referenced layer changes", async () => {
-    await withTempDir(async (dataDir) => {
+    await withTempDir("sillyclaw-v2-test-", async (dataDir) => {
       const store = new SillyClawV2Store({ dataDir });
       const bundle = importSillyTavernPresetV2({
         layerId: "layer-invalidate",
@@ -180,6 +169,87 @@ describe("SillyClawV2Store", () => {
           diagnosticsSummary: [],
         }),
       ]);
+    });
+  });
+
+  it("tracks regex counts in the layer index and persists regex artifacts", async () => {
+    await withTempDir("sillyclaw-v2-test-", async (dataDir) => {
+      const store = new SillyClawV2Store({ dataDir });
+      const bundle = importSillyTavernPresetV2({
+        layerId: "layer-regex-store",
+        name: "Regex Store",
+        importedAt: "2026-04-12T00:00:00.000Z",
+        sourceFileName: "regex-store.json",
+        sourceFileHashSha256: "hash-1",
+        withRegex: true,
+        raw: {
+          prompts: [{ identifier: "main", role: "system", system_prompt: true, content: "MAIN" }],
+          prompt_order: [{ identifier: "main", enabled: true }],
+          extensions: {
+            regex_scripts: [
+              {
+                id: "enabled-rule",
+                scriptName: "Enabled Rule",
+                findRegex: "/Alice/giu",
+                replaceString: "Bob",
+                placement: [1],
+                promptOnly: true,
+              },
+              {
+                id: "disabled-rule",
+                scriptName: "Disabled Rule",
+                findRegex: "/BOT/giu",
+                replaceString: "ALLY",
+                placement: [2],
+                promptOnly: true,
+                disabled: true,
+              },
+            ],
+          },
+        },
+      });
+
+      await store.saveImportedBundle(bundle);
+      await store.saveArtifact({
+        schemaVersion: SILLYCLAW_V2_SCHEMA_VERSION,
+        key: "artifact-regex",
+        stackId: "layer-regex-store--default",
+        plannerVersion: "planner-1",
+        rendererVersion: "renderer-1",
+        createdAt: "2026-04-12T00:00:00.000Z",
+        regexArtifact: {
+          rules: [
+            {
+              ...bundle.layer.regexRules[0]!,
+              key: "artifact-regex:0",
+              stackId: "layer-regex-store--default",
+              layerId: bundle.layer.id,
+              ruleId: bundle.layer.regexRules[0]!.id,
+            },
+          ],
+        },
+        diagnosticsSummary: [],
+      });
+
+      expect(await store.listLayerIndex()).toEqual([
+        expect.objectContaining({
+          id: "layer-regex-store",
+          regexCount: 2,
+          enabledRegexCount: 1,
+        }),
+      ]);
+
+      expect(await store.loadArtifact("artifact-regex")).toMatchObject({
+        key: "artifact-regex",
+        regexArtifact: {
+          rules: [
+            expect.objectContaining({
+              ruleId: "enabled-rule",
+              placements: ["user-input"],
+            }),
+          ],
+        },
+      });
     });
   });
 });

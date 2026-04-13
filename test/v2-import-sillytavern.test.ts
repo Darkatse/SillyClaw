@@ -127,4 +127,103 @@ describe("importSillyTavernPresetV2", () => {
       { fragmentId: "main", enabled: false, ordinal: 1 },
     ]);
   });
+
+  it("imports the supported prompt regex subset when enabled", () => {
+    const bundle = importSillyTavernPresetV2({
+      layerId: "layer-regex",
+      name: "Regex",
+      importedAt: "2026-04-12T00:00:00.000Z",
+      sourceFileName: "regex.json",
+      sourceFileHashSha256: "abc123",
+      withRegex: true,
+      raw: {
+        prompts: [{ identifier: "main", role: "system", system_prompt: true, content: "MAIN" }],
+        prompt_order: [{ identifier: "main", enabled: true }],
+        extensions: {
+          regex_scripts: [
+            {
+              id: "markdown-skip",
+              scriptName: "Markdown Skip",
+              findRegex: "/foo/gi",
+              replaceString: "bar",
+              placement: [1],
+              markdownOnly: true,
+              promptOnly: true,
+            },
+            {
+              id: "non-prompt",
+              scriptName: "Non Prompt",
+              findRegex: "/foo/gi",
+              replaceString: "bar",
+              placement: [1],
+              promptOnly: false,
+            },
+            {
+              id: "unsupported-placement",
+              scriptName: "Unsupported Placement",
+              findRegex: "/foo/gi",
+              replaceString: "bar",
+              placement: [3],
+              promptOnly: true,
+            },
+            {
+              id: "unsupported-substitute",
+              scriptName: "Unsupported Substitute",
+              findRegex: "/foo/gi",
+              replaceString: "bar",
+              placement: [1],
+              promptOnly: true,
+              substituteRegex: 1,
+            },
+            {
+              id: "unsupported-trim",
+              scriptName: "Unsupported Trim",
+              findRegex: "/foo/gi",
+              replaceString: "bar",
+              placement: [1],
+              promptOnly: true,
+              trimStrings: ["foo"],
+            },
+            {
+              id: "replace-input-output",
+              scriptName: "Replace Input/Output",
+              findRegex: "/foo/gi",
+              replaceString: "bar",
+              placement: [1, 2],
+              promptOnly: true,
+              minDepth: 0,
+              maxDepth: 3,
+            },
+          ],
+        },
+      },
+    });
+
+    expect(bundle.layer.regexSource).toEqual({
+      kind: "sillytavern",
+      fileName: "regex.json",
+      fileHashSha256: "abc123",
+      importedAt: "2026-04-12T00:00:00.000Z",
+    });
+    expect(bundle.layer.regexRules).toEqual([
+      {
+        id: "replace-input-output",
+        name: "Replace Input/Output",
+        findRegex: "/foo/gi",
+        replaceString: "bar",
+        placements: ["user-input", "ai-output"],
+        disabled: false,
+        minDepth: 0,
+        maxDepth: 3,
+      },
+    ]);
+    expect(bundle.regexImport).toEqual({
+      importedCount: 1,
+      skippedMarkdownOnlyCount: 1,
+      skippedNonPromptOnlyCount: 1,
+      skippedUnsupportedPlacementCount: 1,
+      skippedUnsupportedSubstitutionCount: 1,
+      skippedUnsupportedTrimCount: 1,
+    });
+  });
 });

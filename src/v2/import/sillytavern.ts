@@ -13,8 +13,15 @@ import type {
 } from "../model.js";
 import { DEFAULT_OPENCLAW_CONTENT_BINDINGS_V2, SILLYCLAW_V2_SCHEMA_VERSION } from "../model.js";
 import { detectFeatureFlagsV2, finalizeLayerV2, resolveScopePreferredRendererV2 } from "../layer-derived.js";
-
-type RecordValue = Record<string, unknown>;
+import { importSillyTavernRegexRulesV2 } from "./sillytavern-regex.js";
+import {
+  asArray,
+  asBoolean,
+  asRecord,
+  asString,
+  extractPromptManagerContainer,
+  type RecordValue,
+} from "./sillytavern-shared.js";
 
 type StPrompt = {
   identifier: string;
@@ -41,46 +48,6 @@ type StPromptOrderScope = {
   sourceScope: PromptScopeSourceV2;
   entries: StPromptOrderEntry[];
 };
-
-function isRecord(value: unknown): value is RecordValue {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function asRecord(value: unknown, label: string): RecordValue {
-  if (!isRecord(value)) {
-    throw new Error(`SillyTavern v2 import: expected ${label} to be an object.`);
-  }
-  return value;
-}
-
-function asArray(value: unknown, label: string): unknown[] {
-  if (!Array.isArray(value)) {
-    throw new Error(`SillyTavern v2 import: expected ${label} to be an array.`);
-  }
-  return value;
-}
-
-function asString(value: unknown, label: string): string {
-  if (typeof value !== "string") {
-    throw new Error(`SillyTavern v2 import: expected ${label} to be a string.`);
-  }
-  return value;
-}
-
-function asBoolean(value: unknown, label: string): boolean {
-  if (typeof value !== "boolean") {
-    throw new Error(`SillyTavern v2 import: expected ${label} to be a boolean.`);
-  }
-  return value;
-}
-
-function extractPromptManagerContainer(raw: unknown): RecordValue {
-  const root = asRecord(raw, "preset JSON");
-  if (root.data !== undefined) {
-    return asRecord(root.data, "preset JSON.data");
-  }
-  return root;
-}
 
 function parsePrompts(container: RecordValue): StPrompt[] {
   const prompts = asArray(container.prompts, "prompts");
@@ -224,12 +191,25 @@ export type ImportSillyTavernPresetV2Params = {
   sourceFileName?: string;
   importedAt?: string;
   sourceFileHashSha256?: string;
+  withRegex?: boolean;
 };
 
 export function importSillyTavernPresetV2(params: ImportSillyTavernPresetV2Params): ImportedPresetBundleV2 {
   const container = extractPromptManagerContainer(params.raw);
   const prompts = parsePrompts(container);
   const layerId = params.layerId ?? randomUUID();
+  const source = {
+    kind: "sillytavern" as const,
+    fileName: params.sourceFileName,
+    fileHashSha256: params.sourceFileHashSha256,
+    importedAt: params.importedAt ?? new Date().toISOString(),
+  };
+  const regexImport = params.withRegex
+    ? importSillyTavernRegexRulesV2({
+        raw: params.raw,
+        source,
+      })
+    : undefined;
 
   const fragments = prompts.map(toFragment);
   const fragmentsById = new Map(fragments.map((fragment) => [fragment.id, fragment]));
@@ -248,14 +228,11 @@ export function importSillyTavernPresetV2(params: ImportSillyTavernPresetV2Param
     schemaVersion: SILLYCLAW_V2_SCHEMA_VERSION,
     id: layerId,
     name: params.name || path.parse(params.sourceFileName ?? "import").name,
-    source: {
-      kind: "sillytavern",
-      fileName: params.sourceFileName,
-      fileHashSha256: params.sourceFileHashSha256,
-      importedAt: params.importedAt ?? new Date().toISOString(),
-    },
+    source,
+    regexSource: regexImport?.source,
     fragments,
     scopes,
+    regexRules: regexImport?.rules ?? [],
     featureSummary: [],
     diagnostics: [],
   } satisfies PresetLayerV2);
@@ -275,5 +252,9 @@ export function importSillyTavernPresetV2(params: ImportSillyTavernPresetV2Param
     },
   }));
 
-  return { layer, stacks };
+  return {
+    layer,
+    stacks,
+    regexImport: regexImport?.summary,
+  };
 }

@@ -4,6 +4,19 @@ export type SillyClawV2SchemaVersion = typeof SILLYCLAW_V2_SCHEMA_VERSION;
 
 export type PromptRoleV2 = "system" | "user" | "assistant";
 
+export type RegexPlacementV2 = "user-input" | "ai-output";
+
+export type RegexRuleV2 = {
+  id: string;
+  name: string;
+  findRegex: string;
+  replaceString: string;
+  placements: RegexPlacementV2[];
+  disabled: boolean;
+  minDepth?: number;
+  maxDepth?: number;
+};
+
 export type PromptFeatureFlagV2 =
   | "contains-setvar"
   | "contains-getvar"
@@ -117,8 +130,10 @@ export type PresetLayerV2 = {
   id: string;
   name: string;
   source?: PresetLayerSourceV2;
+  regexSource?: PresetLayerSourceV2;
   fragments: PromptFragmentV2[];
   scopes: PromptScopeV2[];
+  regexRules: RegexRuleV2[];
   featureSummary: PromptFeatureFlagV2[];
   diagnostics: ImportDiagnosticV2[];
 };
@@ -168,6 +183,8 @@ export type LayerIndexEntryV2 = {
   fragmentCount: number;
   scopeCount: number;
   absoluteCount: number;
+  regexCount: number;
+  enabledRegexCount: number;
   placementSummary: RendererPreferenceV2[];
   hash: string;
 };
@@ -276,6 +293,17 @@ export type EngineArtifactV2 = {
   absolute: EngineAbsoluteInstructionV2[];
 };
 
+export type CompiledRegexRuleV2 = RegexRuleV2 & {
+  key: string;
+  stackId: string;
+  layerId: string;
+  ruleId: string;
+};
+
+export type RegexArtifactV2 = {
+  rules: CompiledRegexRuleV2[];
+};
+
 export type StackArtifactV2 = {
   schemaVersion: SillyClawV2SchemaVersion;
   key: string;
@@ -285,10 +313,21 @@ export type StackArtifactV2 = {
   createdAt: string;
   hookArtifact?: HookArtifactV2;
   engineArtifact?: EngineArtifactV2;
+  regexArtifact?: RegexArtifactV2;
   diagnosticsSummary: DiagnosticCodeV2[];
 };
 
 export type ImportedPresetBundleV2 = {
   layer: PresetLayerV2;
   stacks: StackV2[];
+  regexImport?: RegexImportSummaryV2;
+};
+
+export type RegexImportSummaryV2 = {
+  importedCount: number;
+  skippedMarkdownOnlyCount: number;
+  skippedNonPromptOnlyCount: number;
+  skippedUnsupportedPlacementCount: number;
+  skippedUnsupportedSubstitutionCount: number;
+  skippedUnsupportedTrimCount: number;
 };

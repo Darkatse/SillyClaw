@@ -17,6 +17,9 @@ import type {
   PlacementSummaryV2,
   PresetLayerSourceV2,
   PresetLayerV2,
+  RegexArtifactV2,
+  RegexPlacementV2,
+  RegexRuleV2,
   PromptFeatureFlagV2,
   PromptFragmentV2,
   PromptInsertionV2,
@@ -148,6 +151,14 @@ function parseRendererPreference(value: unknown, label: string): RendererPrefere
   throw new Error(`SillyClaw v2 schema: invalid ${label}: ${preference}`);
 }
 
+function parseRegexPlacement(value: unknown, label: string): RegexPlacementV2 {
+  const placement = asString(value, label);
+  if (placement === "user-input" || placement === "ai-output") {
+    return placement;
+  }
+  throw new Error(`SillyClaw v2 schema: invalid ${label}: ${placement}`);
+}
+
 function parsePromptInsertion(value: unknown, label: string): PromptInsertionV2 {
   const record = asRecord(value, label);
   const kind = asString(record.kind, `${label}.kind`);
@@ -241,6 +252,28 @@ function parseLayerSource(value: unknown, label: string): PresetLayerSourceV2 {
     fileName: parseOptionalString(record.fileName, `${label}.fileName`),
     fileHashSha256: parseOptionalString(record.fileHashSha256, `${label}.fileHashSha256`),
     importedAt: asString(record.importedAt, `${label}.importedAt`),
+  };
+}
+
+function parseRegexRule(value: unknown, label: string): RegexRuleV2 {
+  const record = asRecord(value, label);
+  return {
+    id: asString(record.id, `${label}.id`),
+    name: asString(record.name, `${label}.name`),
+    findRegex: asString(record.findRegex, `${label}.findRegex`),
+    replaceString: asString(record.replaceString, `${label}.replaceString`),
+    placements: asArray(record.placements, `${label}.placements`).map((item, index) =>
+      parseRegexPlacement(item, `${label}.placements[${index}]`),
+    ),
+    disabled: asBoolean(record.disabled, `${label}.disabled`),
+    minDepth:
+      record.minDepth === undefined || record.minDepth === null
+        ? undefined
+        : asNumber(record.minDepth, `${label}.minDepth`),
+    maxDepth:
+      record.maxDepth === undefined || record.maxDepth === null
+        ? undefined
+        : asNumber(record.maxDepth, `${label}.maxDepth`),
   };
 }
 
@@ -460,6 +493,23 @@ function parseEngineArtifact(value: unknown, label: string): EngineArtifactV2 {
   };
 }
 
+function parseRegexArtifact(value: unknown, label: string): RegexArtifactV2 {
+  const record = asRecord(value, label);
+  return {
+    rules: asArray(record.rules, `${label}.rules`).map((item, index) => {
+      const rule = parseRegexRule(item, `${label}.rules[${index}]`);
+      const entry = asRecord(item, `${label}.rules[${index}]`);
+      return {
+        ...rule,
+        key: asString(entry.key, `${label}.rules[${index}].key`),
+        stackId: asString(entry.stackId, `${label}.rules[${index}].stackId`),
+        layerId: asString(entry.layerId, `${label}.rules[${index}].layerId`),
+        ruleId: asString(entry.ruleId, `${label}.rules[${index}].ruleId`),
+      };
+    }),
+  };
+}
+
 function parsePlacementSummary(value: unknown, label: string): PlacementSummaryV2 {
   const record = asRecord(value, label);
   const hook = asRecord(record.hook, `${label}.hook`);
@@ -485,12 +535,20 @@ export function parsePresetLayerV2(raw: unknown): PresetLayerV2 {
     id: asString(record.id, "preset layer v2.id"),
     name: asString(record.name, "preset layer v2.name"),
     source: record.source === undefined ? undefined : parseLayerSource(record.source, "preset layer v2.source"),
+    regexSource:
+      record.regexSource === undefined ? undefined : parseLayerSource(record.regexSource, "preset layer v2.regexSource"),
     fragments: asArray(record.fragments, "preset layer v2.fragments").map((item, index) =>
       parsePromptFragment(item, `preset layer v2.fragments[${index}]`),
     ),
     scopes: asArray(record.scopes, "preset layer v2.scopes").map((item, index) =>
       parsePromptScope(item, `preset layer v2.scopes[${index}]`),
     ),
+    regexRules:
+      record.regexRules === undefined
+        ? []
+        : asArray(record.regexRules, "preset layer v2.regexRules").map((item, index) =>
+            parseRegexRule(item, `preset layer v2.regexRules[${index}]`),
+          ),
     featureSummary: asArray(record.featureSummary, "preset layer v2.featureSummary").map((item, index) =>
       parseFeatureFlag(item, `preset layer v2.featureSummary[${index}]`),
     ),
@@ -542,6 +600,12 @@ export function parseLayerIndexEntryV2(raw: unknown): LayerIndexEntryV2 {
     fragmentCount: asNumber(record.fragmentCount, "layer index entry v2.fragmentCount"),
     scopeCount: asNumber(record.scopeCount, "layer index entry v2.scopeCount"),
     absoluteCount: asNumber(record.absoluteCount, "layer index entry v2.absoluteCount"),
+    regexCount:
+      record.regexCount === undefined ? 0 : asNumber(record.regexCount, "layer index entry v2.regexCount"),
+    enabledRegexCount:
+      record.enabledRegexCount === undefined
+        ? 0
+        : asNumber(record.enabledRegexCount, "layer index entry v2.enabledRegexCount"),
     placementSummary: asArray(record.placementSummary, "layer index entry v2.placementSummary").map((item, index) =>
       parseRendererPreference(item, `layer index entry v2.placementSummary[${index}]`),
     ),
@@ -585,6 +649,10 @@ export function parseStackArtifactV2(raw: unknown): StackArtifactV2 {
       record.engineArtifact === undefined
         ? undefined
         : parseEngineArtifact(record.engineArtifact, "stack artifact v2.engineArtifact"),
+    regexArtifact:
+      record.regexArtifact === undefined
+        ? undefined
+        : parseRegexArtifact(record.regexArtifact, "stack artifact v2.regexArtifact"),
     diagnosticsSummary: asArray(record.diagnosticsSummary, "stack artifact v2.diagnosticsSummary").map((item, index) =>
       parseDiagnosticCode(item, `stack artifact v2.diagnosticsSummary[${index}]`),
     ),

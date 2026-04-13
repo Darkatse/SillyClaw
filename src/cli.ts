@@ -2,6 +2,33 @@ import fs from "node:fs/promises";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import type { SillyClawV2Runtime } from "./v2/runtime.js";
 
+type RegexRuleSummaryShape = {
+  id: string;
+  name: string;
+  placements: string[];
+  disabled?: boolean;
+  minDepth?: number;
+  maxDepth?: number;
+};
+
+type RegexRuleDetailShape = RegexRuleSummaryShape & {
+  findRegex: string;
+  replaceString: string;
+};
+
+type RegexLayerSummaryShape = {
+  id: string;
+  name: string;
+  regexRules: RegexRuleSummaryShape[];
+};
+
+type RegexLayerDetailShape = {
+  id: string;
+  name: string;
+  regexSource?: unknown;
+  regexRules: RegexRuleDetailShape[];
+};
+
 export function registerSillyClawCli(params: {
   api: OpenClawPluginApi;
   runtime: SillyClawV2Runtime;
@@ -15,10 +42,12 @@ export function registerSillyClawCli(params: {
         .command("import")
         .argument("<file>", "Path to a SillyTavern preset JSON file")
         .option("--name <name>", "Override imported layer name")
-        .action(async (file: string, opts: { name?: string }) => {
+        .option("--with-regex", "Import supported SillyTavern prompt regex rules")
+        .action(async (file: string, opts: { name?: string; withRegex?: boolean }) => {
           const bundle = await params.runtime.importSillyTavernFromFile({
             filePath: file,
             name: opts.name,
+            withRegex: opts.withRegex,
           });
 
           console.log(
@@ -40,6 +69,12 @@ export function registerSillyClawCli(params: {
                     severity: diagnostic.severity,
                     scopeId: diagnostic.scopeId,
                   })),
+                  regex: {
+                    source: bundle.layer.regexSource,
+                    totalRules: bundle.layer.regexRules.length,
+                    enabledRules: bundle.layer.regexRules.filter((rule) => !rule.disabled).length,
+                    import: bundle.regexImport,
+                  },
                 },
                 stacks: bundle.stacks.map((stack) => ({
                   id: stack.id,
@@ -91,6 +126,7 @@ export function registerSillyClawCli(params: {
                 id: layer.id,
                 name: layer.name,
                 source: layer.source,
+                regexSource: layer.regexSource,
                 fragments: layer.fragments.map((fragment) => ({
                   id: fragment.id,
                   name: fragment.name,
@@ -102,6 +138,11 @@ export function registerSillyClawCli(params: {
                   chars: fragment.contentTemplate.length,
                 })),
                 scopes: layer.scopes,
+                regex: {
+                  totalRules: layer.regexRules.length,
+                  enabledRules: layer.regexRules.filter((rule) => !rule.disabled).length,
+                  rules: layer.regexRules.map((rule, index) => toRegexRuleSummary(layer, rule.id, index)),
+                },
                 featureSummary: layer.featureSummary,
                 diagnostics: layer.diagnostics,
               },
@@ -317,6 +358,125 @@ export function registerSillyClawCli(params: {
           },
         );
 
+      const layerRegex = layers.command("regex").description("Inspect or modify stored regex rules");
+      layerRegex
+        .command("list")
+        .argument("<layerId>", "Stored v2 layer id")
+        .action(async (layerId: string) => {
+          const layer = await params.runtime.loadLayer(layerId);
+          console.log(JSON.stringify(layer.regexRules.map((rule, index) => toRegexRuleSummary(layer, rule.id, index)), null, 2));
+        });
+
+      layerRegex
+        .command("show")
+        .argument("<layerId>", "Stored v2 layer id")
+        .argument("<ruleId>", "Stored regex rule id")
+        .action(async (layerId: string, ruleId: string) => {
+          const layer = await params.runtime.loadLayer(layerId);
+          console.log(JSON.stringify(toRegexRuleDetail(layer, ruleId), null, 2));
+        });
+
+      layerRegex
+        .command("import")
+        .argument("<layerId>", "Stored v2 layer id")
+        .argument("<file>", "Path to a SillyTavern preset JSON file")
+        .action(async (layerId: string, file: string) => {
+          const result = await params.runtime.replaceLayerRegexFromFile({
+            layerId,
+            filePath: file,
+          });
+          console.log(
+            JSON.stringify(
+              {
+                ok: true,
+                regexSource: result.regexSource,
+                regexImport: result.regexImport,
+                rules: result.layer.regexRules.map((rule, index) => toRegexRuleSummary(result.layer, rule.id, index)),
+                affectedStackIds: result.affectedStackIds,
+                updatedStacks: result.updatedStacks.map(toStackSummary),
+              },
+              null,
+              2,
+            ),
+          );
+        });
+
+      layerRegex
+        .command("enable")
+        .argument("<layerId>", "Stored v2 layer id")
+        .argument("<ruleId>", "Stored regex rule id")
+        .action(async (layerId: string, ruleId: string) => {
+          const result = await params.runtime.setLayerRegexRuleEnabled({
+            layerId,
+            ruleId,
+            enabled: true,
+          });
+          console.log(
+            JSON.stringify(
+              {
+                ok: true,
+                rule: toRegexRuleDetail(result.layer, result.rule.id),
+                affectedStackIds: result.affectedStackIds,
+                updatedStacks: result.updatedStacks.map(toStackSummary),
+              },
+              null,
+              2,
+            ),
+          );
+        });
+
+      layerRegex
+        .command("disable")
+        .argument("<layerId>", "Stored v2 layer id")
+        .argument("<ruleId>", "Stored regex rule id")
+        .action(async (layerId: string, ruleId: string) => {
+          const result = await params.runtime.setLayerRegexRuleEnabled({
+            layerId,
+            ruleId,
+            enabled: false,
+          });
+          console.log(
+            JSON.stringify(
+              {
+                ok: true,
+                rule: toRegexRuleDetail(result.layer, result.rule.id),
+                affectedStackIds: result.affectedStackIds,
+                updatedStacks: result.updatedStacks.map(toStackSummary),
+              },
+              null,
+              2,
+            ),
+          );
+        });
+
+      layerRegex
+        .command("move")
+        .argument("<layerId>", "Stored v2 layer id")
+        .argument("<ruleId>", "Stored regex rule id")
+        .option("--before <ruleId>", "Insert before another regex rule id")
+        .option("--after <ruleId>", "Insert after another regex rule id")
+        .action(async (layerId: string, ruleId: string, opts: { before?: string; after?: string }) => {
+          const result = await params.runtime.moveLayerRegexRule({
+            layerId,
+            ruleId,
+            beforeRuleId: opts.before,
+            afterRuleId: opts.after,
+          });
+          console.log(
+            JSON.stringify(
+              {
+                ok: true,
+                rule: toRegexRuleDetail(result.layer, result.rule.id),
+                rules: result.layer.regexRules.map((rule, index) => toRegexRuleSummary(result.layer, rule.id, index)),
+                affectedStackIds: result.affectedStackIds,
+                updatedStacks: result.updatedStacks.map(toStackSummary),
+              },
+              null,
+              2,
+            ),
+          );
+        });
+
       const stacks = root.command("stacks").description("Inspect stored v2 stacks");
       stacks.command("list").action(async () => {
         console.log(JSON.stringify(await params.runtime.listStackIndex(), null, 2));
@@ -354,6 +514,19 @@ export function registerSillyClawCli(params: {
                 artifact: {
                   key: result.artifact.key,
                   createdAt: result.artifact.createdAt,
+                },
+                regexArtifact: {
+                  count: result.regexRuleCount,
+                  rules:
+                    result.artifact.regexArtifact?.rules.map((rule) => ({
+                      key: rule.key,
+                      layerId: rule.layerId,
+                      ruleId: rule.ruleId,
+                      name: rule.name,
+                      placements: rule.placements,
+                      minDepth: rule.minDepth,
+                      maxDepth: rule.maxDepth,
+                    })) ?? [],
                 },
                 injectionSizes: result.injectionSizes,
                 hookEnvelope: {
@@ -611,6 +784,39 @@ function toStackSummary(stack: { id: string; name: string; preferredRenderer: st
   };
 }
 
+function toRegexRuleSummary(
+  layer: RegexLayerSummaryShape,
+  ruleId: string,
+  index?: number,
+): Record<string, unknown> {
+  const rule = requireRegexRule(layer, ruleId);
+  const order = index ?? layer.regexRules.findIndex((candidate) => candidate.id === rule.id);
+  return {
+    layerId: layer.id,
+    layerName: layer.name,
+    id: rule.id,
+    name: rule.name,
+    order,
+    enabled: !rule.disabled,
+    placements: rule.placements,
+    minDepth: rule.minDepth,
+    maxDepth: rule.maxDepth,
+  };
+}
+
+function toRegexRuleDetail(
+  layer: RegexLayerDetailShape,
+  ruleId: string,
+): Record<string, unknown> {
+  const rule = requireRegexRuleDetail(layer, ruleId);
+  return {
+    ...toRegexRuleSummary(layer, ruleId),
+    regexSource: layer.regexSource,
+    findRegex: rule.findRegex,
+    replaceString: rule.replaceString,
+  };
+}
+
 function requireScope(
   layer: Parameters<typeof toScopeSummary>[0],
   scopeId: string,
@@ -631,6 +837,28 @@ function requireFragment(
     throw new Error(`SillyClaw CLI: missing fragment: ${layer.id}:${fragmentId}`);
   }
   return fragment;
+}
+
+function requireRegexRule(
+  layer: RegexLayerSummaryShape,
+  ruleId: string,
+): RegexRuleSummaryShape {
+  const rule = layer.regexRules.find((candidate) => candidate.id === ruleId);
+  if (!rule) {
+    throw new Error(`SillyClaw CLI: missing regex rule: ${layer.id}:${ruleId}`);
+  }
+  return rule;
+}
+
+function requireRegexRuleDetail(
+  layer: RegexLayerDetailShape,
+  ruleId: string,
+): RegexRuleDetailShape {
+  const rule = layer.regexRules.find((candidate) => candidate.id === ruleId);
+  if (!rule) {
+    throw new Error(`SillyClaw CLI: missing regex rule: ${layer.id}:${ruleId}`);
+  }
+  return rule;
 }
 
 async function readContentInput(opts: {

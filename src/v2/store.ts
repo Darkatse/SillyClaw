@@ -225,6 +225,8 @@ function buildLayerIndexEntry(layer: PresetLayerV2): LayerIndexEntryV2 {
     fragmentCount: layer.fragments.length,
     scopeCount: layer.scopes.length,
     absoluteCount: layer.fragments.filter((fragment) => fragment.insertion.kind === "absolute").length,
+    regexCount: layer.regexRules.length,
+    enabledRegexCount: layer.regexRules.filter((rule) => !rule.disabled).length,
     placementSummary: [...new Set(layer.scopes.map((scope) => scope.preferredRenderer))],
     hash: sha256OfJson(layer),
   };

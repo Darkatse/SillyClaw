@@ -1,24 +1,7 @@
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createSillyClawV2Runtime } from "../src/v2/runtime.js";
-
-async function withTempDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sillyclaw-v2-runtime-test-"));
-  try {
-    return await fn(dir);
-  } finally {
-    await fs.rm(dir, { recursive: true, force: true });
-  }
-}
-
-function buildPreset(content: string) {
-  return {
-    prompts: [{ identifier: "main", role: "system", system_prompt: true, content }],
-    prompt_order: [{ identifier: "main", enabled: true }],
-  };
-}
+import { buildSinglePromptPreset } from "./fixtures/basic-preset.js";
+import { withTempDir, writeJsonFixture } from "./helpers/io.js";
 
 function buildEnginePreset(content: string) {
   return {
@@ -40,19 +23,55 @@ function buildEnginePreset(content: string) {
   };
 }
 
+function buildRegexPreset() {
+  return {
+    prompts: [{ identifier: "main", role: "system", system_prompt: true, content: "MAIN" }],
+    prompt_order: [{ identifier: "main", enabled: true }],
+    extensions: {
+      regex_scripts: [
+        {
+          id: "replace-user",
+          scriptName: "Replace User",
+          findRegex: "/Alice/giu",
+          replaceString: "Bob",
+          placement: [1],
+          promptOnly: true,
+        },
+        {
+          id: "replace-assistant",
+          scriptName: "Replace Assistant",
+          findRegex: "/BOT/giu",
+          replaceString: "ALLY",
+          placement: [2],
+          promptOnly: true,
+          minDepth: 0,
+          maxDepth: 0,
+        },
+      ],
+    },
+  };
+}
+
+function buildEngineRegexPreset(content: string) {
+  return {
+    ...buildEnginePreset(content),
+    extensions: buildRegexPreset().extensions,
+  };
+}
+
 describe("SillyClaw v2 runtime", () => {
   it("resolves active stack with precedence session > agent > default", async () => {
-    await withTempDir(async (dataDir) => {
+    await withTempDir("sillyclaw-v2-runtime-test-", async (dataDir) => {
       const runtime = createSillyClawV2Runtime({ dataDir });
 
       const defaultBundle = await runtime.importSillyTavernFromFile(
-        await writeImportFile(dataDir, "default.json", buildPreset("DEFAULT")),
+        { filePath: await writeJsonFixture(dataDir, "default.json", buildSinglePromptPreset("DEFAULT")) },
       );
       const agentBundle = await runtime.importSillyTavernFromFile(
-        await writeImportFile(dataDir, "agent.json", buildPreset("AGENT")),
+        { filePath: await writeJsonFixture(dataDir, "agent.json", buildSinglePromptPreset("AGENT")) },
       );
       const sessionBundle = await runtime.importSillyTavernFromFile(
-        await writeImportFile(dataDir, "session.json", buildPreset("SESSION")),
+        { filePath: await writeJsonFixture(dataDir, "session.json", buildSinglePromptPreset("SESSION")) },
       );
 
       await runtime.useStack({ stackId: defaultBundle.stacks[0]!.id });
@@ -92,6 +111,7 @@ describe("SillyClaw v2 runtime", () => {
           },
         },
         diagnosticsSummary: [],
+        regexRuleCount: 0,
         injectionSizes: {
           prependSystemContext: 7,
           appendSystemContext: 0,
@@ -102,7 +122,7 @@ describe("SillyClaw v2 runtime", () => {
   });
 
   it("reuses the saved artifact on warm builds", async () => {
-    await withTempDir(async (dataDir) => {
+    await withTempDir("sillyclaw-v2-runtime-test-", async (dataDir) => {
       const logger = {
         debug: vi.fn<(message: string) => void>(),
       };
@@ -113,7 +133,7 @@ describe("SillyClaw v2 runtime", () => {
       });
 
       const bundle = await runtime.importSillyTavernFromFile(
-        await writeImportFile(dataDir, "single.json", buildPreset("CACHEABLE")),
+        { filePath: await writeJsonFixture(dataDir, "single.json", buildSinglePromptPreset("CACHEABLE")) },
       );
       const stackId = bundle.stacks[0]!.id;
 
@@ -140,11 +160,11 @@ describe("SillyClaw v2 runtime", () => {
   });
 
   it("inspects the active stack from index and artifact data without hydrating bodies on the warm path", async () => {
-    await withTempDir(async (dataDir) => {
+    await withTempDir("sillyclaw-v2-runtime-test-", async (dataDir) => {
       const runtime = createSillyClawV2Runtime({ dataDir });
 
       const bundle = await runtime.importSillyTavernFromFile(
-        await writeImportFile(dataDir, "active.json", buildPreset("ACTIVE")),
+        { filePath: await writeJsonFixture(dataDir, "active.json", buildSinglePromptPreset("ACTIVE")) },
       );
       const stackId = bundle.stacks[0]!.id;
       await runtime.useStack({ stackId });
@@ -173,6 +193,7 @@ describe("SillyClaw v2 runtime", () => {
           },
         },
         diagnosticsSummary: [],
+        regexRuleCount: 0,
         injectionSizes: {
           prependSystemContext: 6,
           appendSystemContext: 0,
@@ -186,17 +207,17 @@ describe("SillyClaw v2 runtime", () => {
   });
 
   it("uses session/default selection for context-engine assembly", async () => {
-    await withTempDir(async (dataDir) => {
+    await withTempDir("sillyclaw-v2-runtime-test-", async (dataDir) => {
       const runtime = createSillyClawV2Runtime({ dataDir });
 
       const defaultBundle = await runtime.importSillyTavernFromFile(
-        await writeImportFile(dataDir, "default-engine.json", buildEnginePreset("DEFAULT")),
+        { filePath: await writeJsonFixture(dataDir, "default-engine.json", buildEnginePreset("DEFAULT")) },
       );
       const agentBundle = await runtime.importSillyTavernFromFile(
-        await writeImportFile(dataDir, "agent-engine.json", buildEnginePreset("AGENT")),
+        { filePath: await writeJsonFixture(dataDir, "agent-engine.json", buildEnginePreset("AGENT")) },
       );
       const sessionBundle = await runtime.importSillyTavernFromFile(
-        await writeImportFile(dataDir, "session-engine.json", buildEnginePreset("SESSION")),
+        { filePath: await writeJsonFixture(dataDir, "session-engine.json", buildEnginePreset("SESSION")) },
       );
 
       await runtime.useStack({ stackId: defaultBundle.stacks[0]!.id });
@@ -221,14 +242,53 @@ describe("SillyClaw v2 runtime", () => {
       ]);
     });
   });
-});
 
-async function writeImportFile(
-  dataDir: string,
-  fileName: string,
-  raw: unknown,
-): Promise<{ filePath: string }> {
-  const filePath = path.join(dataDir, fileName);
-  await fs.writeFile(filePath, JSON.stringify(raw, null, 2), "utf-8");
-  return { filePath };
-}
+  it("rewrites transcript history with regex rules before context-engine insertions", async () => {
+    await withTempDir("sillyclaw-v2-runtime-test-", async (dataDir) => {
+      const runtime = createSillyClawV2Runtime({ dataDir });
+      const bundle = await runtime.importSillyTavernFromFile({
+        filePath: await writeJsonFixture(dataDir, "regex-engine.json", buildEngineRegexPreset("TAIL")),
+        withRegex: true,
+      });
+
+      await runtime.useStack({ stackId: bundle.stacks[0]!.id });
+
+      expect(
+        await runtime.buildContextMessages({
+          messages: [
+            { role: "user", content: "Alice greets", timestamp: 1 },
+            { role: "assistant", content: [{ type: "text", text: "BOT replies" }], timestamp: 2 },
+          ],
+        }),
+      ).toMatchObject([
+        { role: "user", content: "Bob greets" },
+        { role: "assistant", content: [{ type: "text", text: "ALLY replies" }] },
+        { role: "assistant", content: [{ type: "text", text: "TAIL" }] },
+      ]);
+    });
+  });
+
+  it("returns regex-rewritten messages even when the active stack has no engine artifact", async () => {
+    await withTempDir("sillyclaw-v2-runtime-test-", async (dataDir) => {
+      const runtime = createSillyClawV2Runtime({ dataDir });
+      const bundle = await runtime.importSillyTavernFromFile({
+        filePath: await writeJsonFixture(dataDir, "regex-only.json", buildRegexPreset()),
+        withRegex: true,
+      });
+
+      await runtime.useStack({ stackId: bundle.stacks[0]!.id });
+
+      expect(
+        await runtime.buildContextMessages({
+          messages: [
+            { role: "user", content: "Alice greets", timestamp: 1 },
+            { role: "assistant", content: [{ type: "text", text: "BOT replies" }], timestamp: 2 },
+          ],
+        }),
+      ).toEqual([
+        { role: "user", content: "Bob greets", timestamp: 1 },
+        { role: "assistant", content: [{ type: "text", text: "ALLY replies" }], timestamp: 2 },
+      ]);
+    });
+  });
+});

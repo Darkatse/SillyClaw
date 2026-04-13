@@ -1,25 +1,16 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { createSillyClawV2Runtime } from "../src/v2/runtime.js";
 import { buildComplexAcceptancePreset } from "./fixtures/complex-preset.js";
-
-async function withTempDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sillyclaw-v2-observability-test-"));
-  try {
-    return await fn(dir);
-  } finally {
-    await fs.rm(dir, { recursive: true, force: true });
-  }
-}
+import { withTempDir, writeJsonFixture } from "./helpers/io.js";
 
 describe("SillyClaw v2 observability", () => {
   it("exposes placement summaries and diagnostics for the complex acceptance preset", async () => {
-    await withTempDir(async (dataDir) => {
+    await withTempDir("sillyclaw-v2-observability-test-", async (dataDir) => {
       const runtime = createSillyClawV2Runtime({ dataDir });
       const bundle = await runtime.importSillyTavernFromFile({
-        filePath: await writePresetFile(dataDir, "complex.json", buildComplexAcceptancePreset()),
+        filePath: await writeJsonFixture(dataDir, "complex.json", buildComplexAcceptancePreset()),
       });
       const stack = bundle.stacks.find((candidate) => candidate.id.endsWith("--character-100001"));
       expect(stack).toBeDefined();
@@ -94,10 +85,10 @@ describe("SillyClaw v2 observability", () => {
   });
 
   it("classifies warm, stale, cold, and orphaned artifacts in cache stats", async () => {
-    await withTempDir(async (dataDir) => {
+    await withTempDir("sillyclaw-v2-observability-test-", async (dataDir) => {
       const runtime = createSillyClawV2Runtime({ dataDir });
       const bundle = await runtime.importSillyTavernFromFile({
-        filePath: await writePresetFile(dataDir, "complex.json", buildComplexAcceptancePreset()),
+        filePath: await writeJsonFixture(dataDir, "complex.json", buildComplexAcceptancePreset()),
       });
       const warmStack = bundle.stacks.find((candidate) => candidate.id.endsWith("--character-100001"));
       const staleStack = bundle.stacks.find((candidate) => candidate.id.endsWith("--character-100000"));
@@ -140,13 +131,3 @@ describe("SillyClaw v2 observability", () => {
     });
   });
 });
-
-async function writePresetFile(
-  dataDir: string,
-  fileName: string,
-  raw: unknown,
-): Promise<string> {
-  const filePath = path.join(dataDir, fileName);
-  await fs.writeFile(filePath, JSON.stringify(raw, null, 2), "utf-8");
-  return filePath;
-}

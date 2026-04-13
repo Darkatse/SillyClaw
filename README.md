@@ -11,6 +11,7 @@ Current runtime shape:
 - all imported SillyTavern `prompt_order` scopes are preserved
 - hooks render only exact outer-envelope placements
 - the `sillyclaw` context engine handles history-relative and absolute-depth placement
+- the `sillyclaw` context engine also performs request-time transcript regex rewriting
 - cache authority lives in `v2/indexes/stacks.json`
 - tooling exposes placement summaries, diagnostics, and cache stats
 
@@ -28,13 +29,17 @@ Current hard boundary:
 - `SOUL.md` + `IDENTITY.md` as character
 - exact hook placement for the small subset OpenClaw actually exposes
 - context-engine placement before history, after history, and by absolute depth
+- optional import and management of supported SillyTavern prompt regex rules
+- request-time transcript rewriting for supported regex rules when SillyClaw is the active context engine
 
 Not supported as runtime behavior:
 
 - SillyTavern advanced macro execution
-- SillyTavern regex/runtime extensions
+- Markdown-only regex rules
+- non-`promptOnly` regex rules
+- unsupported SillyTavern regex placement, substitution, and trim modes
 
-Those syntaxes are imported as opaque text and reported in diagnostics.
+Unsupported regex modes are skipped during regex import and surfaced in import summaries. Advanced macro syntax inside prompt text is still imported as opaque text and reported in diagnostics.
 
 ## Quick Start
 
@@ -59,12 +64,13 @@ openclaw plugins enable sillyclaw
 }
 ```
 
-Without that slot, SillyClaw still runs in degraded hook-only mode.
+Without that slot, SillyClaw still runs in degraded hook-only mode. Supported regex rules remain stored on the layer, but request-time transcript rewriting only happens when SillyClaw is the active context engine.
 
 3. Import a SillyTavern preset.
 
 ```bash
 openclaw sillyclaw import ./my-preset.json
+openclaw sillyclaw import ./my-preset.json --with-regex
 ```
 
 4. List the generated stacks and choose one.
@@ -84,6 +90,9 @@ openclaw sillyclaw layers scopes move <layerId> <scopeId> <fragmentId> --before 
 openclaw sillyclaw layers fragments show <layerId> <fragmentId>
 openclaw sillyclaw layers fragments set-content <layerId> <fragmentId> --file ./prompt.txt
 openclaw sillyclaw layers fragments set-insertion <layerId> <fragmentId> --absolute --depth 2 --order -100
+openclaw sillyclaw layers regex list <layerId>
+openclaw sillyclaw layers regex import <layerId> ./my-preset.json
+openclaw sillyclaw layers regex move <layerId> <ruleId> --before <otherRuleId>
 ```
 
 6. Inspect the compiled result.
@@ -99,7 +108,7 @@ openclaw sillyclaw cache stats
 
 Import and state:
 
-- `openclaw sillyclaw import <file> [--name <name>]`
+- `openclaw sillyclaw import <file> [--name <name>] [--with-regex]`
 - `openclaw sillyclaw active [--agent <agentId>] [--session <sessionKey>]`
 - `openclaw sillyclaw state`
 - `openclaw sillyclaw cache stats`
@@ -117,6 +126,12 @@ Layers:
 - `openclaw sillyclaw layers fragments show <layerId> <fragmentId>`
 - `openclaw sillyclaw layers fragments set-content <layerId> <fragmentId> [--text <text> | --file <file> | --stdin]`
 - `openclaw sillyclaw layers fragments set-insertion <layerId> <fragmentId> [--relative | --absolute --depth <n> --order <n>]`
+- `openclaw sillyclaw layers regex list <layerId>`
+- `openclaw sillyclaw layers regex show <layerId> <ruleId>`
+- `openclaw sillyclaw layers regex import <layerId> <file>`
+- `openclaw sillyclaw layers regex enable <layerId> <ruleId>`
+- `openclaw sillyclaw layers regex disable <layerId> <ruleId>`
+- `openclaw sillyclaw layers regex move <layerId> <ruleId> [--before <otherRuleId> | --after <otherRuleId>]`
 
 Stacks:
 

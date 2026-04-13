@@ -31,7 +31,8 @@ The v2 on-disk model preserves the source preset more faithfully than v1:
 - every imported `prompt_order` list is preserved as a `scope`,
 - one imported source file can therefore yield multiple stacks,
 - markers are preserved as anchors instead of being discarded,
-- unsupported SillyTavern macro and regex syntax is imported as opaque text and summarized in diagnostics.
+- unsupported SillyTavern macro syntax is imported as opaque text and summarized in diagnostics,
+- supported request-time SillyTavern prompt regex rules are stored separately as layer-owned regex data.
 
 ## 3. Layer File
 
@@ -45,8 +46,10 @@ Shape:
 - `id: string`
 - `name: string`
 - `source?: { kind: "sillytavern", fileName?, fileHashSha256?, importedAt }`
+- `regexSource?: { kind: "sillytavern", fileName?, fileHashSha256?, importedAt }`
 - `fragments: PromptFragmentV2[]`
 - `scopes: PromptScopeV2[]`
+- `regexRules: RegexRuleV2[]`
 - `featureSummary: PromptFeatureFlagV2[]`
 - `diagnostics: ImportDiagnosticV2[]`
 
@@ -111,6 +114,28 @@ Important:
 - entries that reference missing fragment definitions are dropped during import,
 - the importer does not collapse multiple scopes into one preferred scope.
 
+### `RegexRuleV2`
+
+Layer-owned request-time regex rule storage.
+
+- `id`
+- `name`
+- `findRegex`
+- `replaceString`
+- `placements`
+  - `"user-input"`
+  - `"ai-output"`
+- `disabled`
+- `minDepth?`
+- `maxDepth?`
+
+Important:
+
+- rules are stored in execution order,
+- `markdownOnly=true` always wins and the rule is skipped at import time,
+- current import support is intentionally limited to `promptOnly=true`,
+- unsupported placement, substitution, and trim modes are skipped instead of being normalized into a different behavior.
+
 ## 4. Stack File
 
 Path:
@@ -167,6 +192,8 @@ Array of:
 - `fragmentCount`
 - `scopeCount`
 - `absoluteCount`
+- `regexCount`
+- `enabledRegexCount`
 - `placementSummary`
 - `hash`
 
@@ -230,6 +257,7 @@ Shape:
 - `createdAt`
 - `hookArtifact?`
 - `engineArtifact?`
+- `regexArtifact?`
 - `diagnosticsSummary`
 
 ### `hookArtifact`
@@ -277,6 +305,33 @@ Important:
 - `beforeHistory` and `afterHistory` are message-level approximations for any imported prompt that is not hook-exact but can still be expressed relative to transcript history,
 - `absolute` mirrors SillyTavern in-chat insertion semantics and is applied against the live transcript only,
 - anchor-relative prompts from the source graph are not reinterpreted as internal OpenClaw system-prompt anchors during runtime.
+
+### `regexArtifact`
+
+Compiled request-time regex artifact.
+
+Shape:
+
+- `rules`
+  - ordered compiled regex rules
+  - each item contains:
+    - `key`
+    - `stackId`
+    - `layerId`
+    - `ruleId`
+    - `name`
+    - `findRegex`
+    - `replaceString`
+    - `placements`
+    - `minDepth?`
+    - `maxDepth?`
+
+Important:
+
+- regex rules remain layer-owned in storage and stack-owned in compilation,
+- compilation collects enabled regex rules by stack layer order,
+- request-time execution rewrites transcript messages before `engineArtifact` insertions are assembled,
+- only user and assistant history messages are rewritten in the current phase.
 
 ### `diagnosticsSummary`
 
@@ -347,7 +402,9 @@ Current preservation rules:
 - all prompt definitions become fragments,
 - all `prompt_order` lists become preserved scopes,
 - markers become anchor-bound fragments,
-- advanced SillyTavern macro and regex syntax is detected but not executed,
+- advanced SillyTavern macro syntax inside prompt bodies is detected but not executed,
+- supported request-time prompt regex rules are imported into `regexRules`,
+- `markdownOnly` rules are always skipped,
 - renderer preference is inferred per scope:
   - `context-engine` when enabled prompts contain absolute insertions or non-system roles
   - `hybrid` when the scope is system-only but still touches chat-history placement
@@ -357,7 +414,7 @@ Current preservation rules:
 
 Current commands:
 
-- `openclaw sillyclaw import <file>`
+- `openclaw sillyclaw import <file> [--with-regex]`
 - `openclaw sillyclaw active`
 - `openclaw sillyclaw state`
 - `openclaw sillyclaw cache stats`
@@ -372,6 +429,12 @@ Current commands:
 - `openclaw sillyclaw layers fragments show <layerId> <fragmentId>`
 - `openclaw sillyclaw layers fragments set-content <layerId> <fragmentId>`
 - `openclaw sillyclaw layers fragments set-insertion <layerId> <fragmentId>`
+- `openclaw sillyclaw layers regex list <layerId>`
+- `openclaw sillyclaw layers regex show <layerId> <ruleId>`
+- `openclaw sillyclaw layers regex import <layerId> <file>`
+- `openclaw sillyclaw layers regex enable <layerId> <ruleId>`
+- `openclaw sillyclaw layers regex disable <layerId> <ruleId>`
+- `openclaw sillyclaw layers regex move <layerId> <ruleId>`
 - `openclaw sillyclaw stacks list`
 - `openclaw sillyclaw stacks show <stackId>`
 - `openclaw sillyclaw stacks inspect <stackId>`

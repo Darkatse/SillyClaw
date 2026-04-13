@@ -12,9 +12,12 @@ import type {
   PlacementSummaryV2,
   PlanDiagnosticV2,
   PresetLayerV2,
+  PresetLayerSourceV2,
   PromptFragmentV2,
   PromptInsertionV2,
   PromptScopeV2,
+  RegexImportSummaryV2,
+  RegexRuleV2,
   RenderPlanV2,
   SillyClawStateV2,
   StackArtifactV2,
@@ -22,16 +25,25 @@ import type {
   StackV2,
 } from "./model.js";
 import { SILLYCLAW_V2_SCHEMA_VERSION } from "./model.js";
+import { importSillyTavernRegexRulesV2 } from "./import/sillytavern-regex.js";
 import { importSillyTavernPresetV2 } from "./import/sillytavern.js";
 import { finalizeLayerV2, resolveStackPreferredRendererV2 } from "./layer-derived.js";
 import {
+  moveRegexRuleV2,
   moveScopeEntryV2,
+  replaceLayerRegexRulesV2,
   setFragmentContentV2,
   setFragmentInsertionV2,
+  setRegexRuleEnabledV2,
   setScopeEntryEnabledV2,
 } from "./layer-mutations.js";
 import { summarizePlacementV2 } from "./observability.js";
 import { planStackRenderV2, SILLYCLAW_V2_PLANNER_VERSION } from "./planner.js";
+import {
+  SILLYCLAW_V2_REGEX_RENDERER_VERSION,
+  applyRegexArtifactV2,
+  compileRegexArtifactV2,
+} from "./regex.js";
 import {
   SILLYCLAW_V2_CONTEXT_ENGINE_RENDERER_VERSION,
   assembleContextEngineMessagesV2,
@@ -50,7 +62,7 @@ type RuntimeLogger = {
 type ActiveSelectionScopeV2 = "none" | "session" | "agent" | "default";
 
 const SILLYCLAW_V2_RENDERER_VERSION =
-  `${SILLYCLAW_V2_HOOK_RENDERER_VERSION}:${SILLYCLAW_V2_CONTEXT_ENGINE_RENDERER_VERSION}`;
+  `${SILLYCLAW_V2_HOOK_RENDERER_VERSION}:${SILLYCLAW_V2_CONTEXT_ENGINE_RENDERER_VERSION}:${SILLYCLAW_V2_REGEX_RENDERER_VERSION}`;
 
 type StackInspectionV2 = {
   stack: StackV2;
@@ -61,6 +73,7 @@ type StackInspectionV2 = {
   importDiagnostics: Array<ImportDiagnosticV2 & { layerId: string; layerName: string }>;
   planDiagnostics: PlanDiagnosticV2[];
   diagnosticsSummary: DiagnosticCodeV2[];
+  regexRuleCount: number;
   injectionSizes: {
     prependSystemContext: number;
     appendSystemContext: number;
@@ -79,6 +92,7 @@ type ActiveInspectionV2 =
       cacheSource: "artifact" | "compile";
       placementSummary: PlacementSummaryV2;
       diagnosticsSummary: DiagnosticCodeV2[];
+      regexRuleCount: number;
       injectionSizes: {
         prependSystemContext: number;
         appendSystemContext: number;
@@ -118,10 +132,30 @@ type LayerFragmentMutationResultV2 = {
   updatedStacks: StackV2[];
 };
 
+type LayerRegexMutationResultV2 = {
+  layer: PresetLayerV2;
+  rule: RegexRuleV2;
+  affectedStackIds: string[];
+  updatedStacks: StackV2[];
+};
+
+type LayerRegexImportResultV2 = {
+  layer: PresetLayerV2;
+  regexSource?: PresetLayerSourceV2;
+  regexImport: RegexImportSummaryV2;
+  affectedStackIds: string[];
+  updatedStacks: StackV2[];
+};
+
 export type SillyClawV2Runtime = {
   store: SillyClawV2Store;
   loadState: () => Promise<SillyClawStateV2>;
-  importSillyTavernFromFile: (params: { filePath: string; name?: string; layerId?: string }) => Promise<ImportedPresetBundleV2>;
+  importSillyTavernFromFile: (params: {
+    filePath: string;
+    name?: string;
+    layerId?: string;
+    withRegex?: boolean;
+  }) => Promise<ImportedPresetBundleV2>;
   listLayerIndex: () => Promise<LayerIndexEntryV2[]>;
   listStackIndex: () => Promise<StackIndexEntryV2[]>;
   loadLayer: (id: string) => Promise<PresetLayerV2>;
@@ -159,6 +193,18 @@ export type SillyClawV2Runtime = {
     fragmentId: string;
     insertion: PromptInsertionV2;
   }) => Promise<LayerFragmentMutationResultV2>;
+  replaceLayerRegexFromFile: (params: { layerId: string; filePath: string }) => Promise<LayerRegexImportResultV2>;
+  setLayerRegexRuleEnabled: (params: {
+    layerId: string;
+    ruleId: string;
+    enabled: boolean;
+  }) => Promise<LayerRegexMutationResultV2>;
+  moveLayerRegexRule: (params: {
+    layerId: string;
+    ruleId: string;
+    beforeRuleId?: string;
+    afterRuleId?: string;
+  }) => Promise<LayerRegexMutationResultV2>;
   inspectStack: (params: { stackId: string }) => Promise<StackInspectionV2>;
   inspectActive: (ctx: { agentId?: string; sessionKey?: string }) => Promise<ActiveInspectionV2>;
   inspectCache: () => Promise<CacheStatsV2>;
@@ -179,17 +225,19 @@ export function createSillyClawV2Runtime(params: {
     filePath: string;
     name?: string;
     layerId?: string;
+    withRegex?: boolean;
   }): Promise<ImportedPresetBundleV2> {
-    const absPath = path.resolve(p.filePath);
-    const rawText = await fs.readFile(absPath, "utf-8");
-    const fileHashSha256 = createHash("sha256").update(rawText, "utf-8").digest("hex");
+    const importedFile = await loadSillyTavernSourceFile(p.filePath);
+    const importedAt = new Date().toISOString();
 
     const bundle = importSillyTavernPresetV2({
-      raw: JSON.parse(rawText) as unknown,
+      raw: importedFile.raw,
       layerId: p.layerId,
-      name: p.name ?? path.parse(absPath).name,
-      sourceFileName: path.basename(absPath),
-      sourceFileHashSha256: fileHashSha256,
+      name: p.name ?? path.parse(importedFile.fileName).name,
+      sourceFileName: importedFile.fileName,
+      sourceFileHashSha256: importedFile.fileHashSha256,
+      importedAt,
+      withRegex: p.withRegex,
     });
 
     await store.saveImportedBundle(bundle);
@@ -264,13 +312,21 @@ export function createSillyClawV2Runtime(params: {
       sessionKey: ctx.sessionKey,
       allowAgentFallback: false,
     });
-    if (!resolved?.artifact.engineArtifact) {
+    if (!resolved) {
       return ctx.messages;
+    }
+
+    const rewrittenMessages = applyRegexArtifactV2({
+      artifact: resolved.artifact.regexArtifact,
+      messages: ctx.messages,
+    });
+    if (!resolved.artifact.engineArtifact) {
+      return rewrittenMessages;
     }
 
     return assembleContextEngineMessagesV2({
       artifact: resolved.artifact.engineArtifact,
-      messages: ctx.messages,
+      messages: rewrittenMessages,
     });
   }
 
@@ -364,6 +420,78 @@ export function createSillyClawV2Runtime(params: {
     };
   }
 
+  async function replaceLayerRegexFromFile(params: {
+    layerId: string;
+    filePath: string;
+  }): Promise<LayerRegexImportResultV2> {
+    const importedFile = await loadSillyTavernSourceFile(params.filePath);
+    const source = toSillyTavernSourceV2(importedFile, new Date().toISOString());
+    const imported = importSillyTavernRegexRulesV2({
+      raw: importedFile.raw,
+      source,
+    });
+    const result = await mutateLayer({
+      store,
+      layerId: params.layerId,
+      mutate: (layer) =>
+        replaceLayerRegexRulesV2({
+          layer,
+          regexSource: imported.source,
+          regexRules: imported.rules,
+        }),
+    });
+
+    return {
+      ...result,
+      regexSource: imported.source,
+      regexImport: imported.summary,
+    };
+  }
+
+  async function setLayerRegexRuleEnabled(params: {
+    layerId: string;
+    ruleId: string;
+    enabled: boolean;
+  }): Promise<LayerRegexMutationResultV2> {
+    const result = await mutateLayer({
+      store,
+      layerId: params.layerId,
+      mutate: (layer) =>
+        setRegexRuleEnabledV2({
+          layer,
+          ruleId: params.ruleId,
+          enabled: params.enabled,
+        }),
+    });
+    return {
+      ...result,
+      rule: requireRegexRule(result.layer, params.ruleId),
+    };
+  }
+
+  async function moveLayerRegexRule(params: {
+    layerId: string;
+    ruleId: string;
+    beforeRuleId?: string;
+    afterRuleId?: string;
+  }): Promise<LayerRegexMutationResultV2> {
+    const result = await mutateLayer({
+      store,
+      layerId: params.layerId,
+      mutate: (layer) =>
+        moveRegexRuleV2({
+          layer,
+          ruleId: params.ruleId,
+          beforeRuleId: params.beforeRuleId,
+          afterRuleId: params.afterRuleId,
+        }),
+    });
+    return {
+      ...result,
+      rule: requireRegexRule(result.layer, params.ruleId),
+    };
+  }
+
   async function inspectStack(p: { stackId: string }): Promise<StackInspectionV2> {
     const compiled = await compileStack({
       store,
@@ -378,6 +506,7 @@ export function createSillyClawV2Runtime(params: {
       importDiagnostics: flattenImportDiagnostics(compiled.layers),
       planDiagnostics: compiled.plan.diagnostics,
       diagnosticsSummary: compiled.diagnosticsSummary,
+      regexRuleCount: compiled.artifact.regexArtifact?.rules.length ?? 0,
       injectionSizes: resolveInjectionSizes(compiled.artifact.hookArtifact?.injection),
     };
   }
@@ -403,6 +532,7 @@ export function createSillyClawV2Runtime(params: {
         cacheSource: "artifact",
         placementSummary: warmArtifact.indexEntry.placementSummary ?? summarizePlacementV2(warmArtifact.artifact),
         diagnosticsSummary: warmArtifact.artifact.diagnosticsSummary,
+        regexRuleCount: warmArtifact.artifact.regexArtifact?.rules.length ?? 0,
         injectionSizes: resolveInjectionSizes(warmArtifact.artifact.hookArtifact?.injection),
       } as const;
     }
@@ -420,6 +550,7 @@ export function createSillyClawV2Runtime(params: {
       cacheSource: "compile",
       placementSummary: summarizePlacementV2(compiled.artifact),
       diagnosticsSummary: compiled.diagnosticsSummary,
+      regexRuleCount: compiled.artifact.regexArtifact?.rules.length ?? 0,
       injectionSizes: resolveInjectionSizes(compiled.artifact.hookArtifact?.injection),
     } as const;
   }
@@ -481,6 +612,9 @@ export function createSillyClawV2Runtime(params: {
     moveLayerScopeEntry,
     setLayerFragmentContent,
     setLayerFragmentInsertion,
+    replaceLayerRegexFromFile,
+    setLayerRegexRuleEnabled,
+    moveLayerRegexRule,
     inspectStack,
     inspectActive,
     inspectCache,
@@ -504,6 +638,7 @@ async function compileStack(params: {
   const plan = planStackRenderV2({ stack, layers });
   const hookArtifact = renderHookArtifactV2(plan);
   const engineArtifact = renderContextEngineArtifactV2(plan);
+  const regexArtifact = compileRegexArtifactV2({ stack, layers });
   const diagnosticsSummary = summarizeDiagnostics(layers, plan);
   const artifact: StackArtifactV2 = {
     schemaVersion: SILLYCLAW_V2_SCHEMA_VERSION,
@@ -514,6 +649,7 @@ async function compileStack(params: {
     createdAt: new Date().toISOString(),
     hookArtifact,
     engineArtifact,
+    regexArtifact,
     diagnosticsSummary,
   };
 
@@ -686,6 +822,14 @@ function requireFragment(layer: PresetLayerV2, fragmentId: string): PromptFragme
   return fragment;
 }
 
+function requireRegexRule(layer: PresetLayerV2, ruleId: string): RegexRuleV2 {
+  const rule = layer.regexRules.find((candidate) => candidate.id === ruleId);
+  if (!rule) {
+    throw new Error(`SillyClaw v2 runtime: missing regex rule after mutation: ${layer.id}:${ruleId}`);
+  }
+  return rule;
+}
+
 function summarizeDiagnostics(
   layers: PresetLayerV2[],
   plan: RenderPlanV2,
@@ -772,4 +916,35 @@ function logBuild(
       `diagnostics=${event.artifact.diagnosticsSummary.join(",") || "none"}`,
     ].join(" "),
   );
+}
+
+async function loadSillyTavernSourceFile(filePath: string): Promise<{
+  absPath: string;
+  fileName: string;
+  fileHashSha256: string;
+  raw: unknown;
+}> {
+  const absPath = path.resolve(filePath);
+  const rawText = await fs.readFile(absPath, "utf-8");
+  return {
+    absPath,
+    fileName: path.basename(absPath),
+    fileHashSha256: createHash("sha256").update(rawText, "utf-8").digest("hex"),
+    raw: JSON.parse(rawText) as unknown,
+  };
+}
+
+function toSillyTavernSourceV2(
+  file: {
+    fileName: string;
+    fileHashSha256: string;
+  },
+  importedAt: string,
+): PresetLayerSourceV2 {
+  return {
+    kind: "sillytavern",
+    fileName: file.fileName,
+    fileHashSha256: file.fileHashSha256,
+    importedAt,
+  };
 }
